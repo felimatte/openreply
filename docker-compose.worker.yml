@@ -1,0 +1,36 @@
+# Corre SOLO el worker de OpenReply (el proceso que manda los DMs).
+#
+# Para que sirve: el worker tiene que estar prendido todo el tiempo. Corrido a
+# mano con `npm run worker` se muere al cerrar la terminal y no vuelve solo
+# despues de reiniciar la computadora. Asi, Docker lo levanta solo.
+#
+# La base de datos y Redis NO estan aca: viven en Neon y Redis Cloud, y el
+# worker se conecta a ellos por internet. Este archivo no tiene nada que ver
+# con el docker-compose.yml de al lado, que es el Postgres/Redis de pruebas
+# locales.
+#
+# Como se usa:
+#   1. Llenar .env.worker con los 8 valores (ver .env.deploy-values)
+#   2. docker compose -f docker-compose.worker.yml up -d --build
+#   3. Chequear: docker compose -f docker-compose.worker.yml logs -f
+#
+# Para que arranque solo al prender la computadora, Docker Desktop tiene que
+# estar configurado para iniciarse con Windows (Settings > General >
+# "Start Docker Desktop when you sign in"). Con eso, `restart: unless-stopped`
+# se encarga del resto.
+
+services:
+  worker:
+    build: .
+    image: openreply:local
+    command: ["npm", "run", "worker"]
+    env_file: .env.worker
+    restart: unless-stopped
+    # Al frenar el contenedor (o al apagar la computadora), Docker le avisa al
+    # worker y espera hasta 30s a que termine el DM que tenga entre manos antes
+    # de matarlo. El worker atiende ese aviso: ver worker/dm-worker.ts.
+    #
+    # Ojo: restart: unless-stopped revive al worker si se CAE, pero no si se
+    # queda colgado sin caerse. Eso se ve en /api/health, que deja de recibir
+    # el latido.
+    stop_grace_period: 30s
