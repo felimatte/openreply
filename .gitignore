@@ -43,3 +43,6 @@ next-env.d.ts
 
 /app/generated/prisma
 .gstack/
+
+# notas de sesion locales (se sincronizan por Dropbox, no por git)
+/progress/
