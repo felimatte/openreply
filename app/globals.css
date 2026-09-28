@@ -1,92 +1,194 @@
 @import "tailwindcss";
 
-/* ManyChat Alternative — Design System
-   Plain and functional. No gradients, glass, glow, or animation. */
-
+/* Felimattee on-camera skin: black canvas, coral heat, magenta and violet light. */
 @theme inline {
-  --color-background: #ffffff;
-  --color-foreground: #18181b;
-  --color-surface: #f7f7f8;
-  --color-surface-hover: #efeff1;
-  --color-border: #e4e4e7;
-  --color-border-hover: #d4d4d8;
-  --color-muted: #71717a;
-  --color-accent: #f97316;
-  --color-accent-hover: #ea580c;
-  --color-success: #16a34a;
-  --color-error: #dc2626;
-  --color-warning: #d97706;
-  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-background: #09070b;
+  --color-foreground: #fff8f4;
+  --color-surface: #151118;
+  --color-surface-hover: #241a25;
+  --color-border: #382536;
+  --color-border-hover: #78405e;
+  --color-muted: #b6a5b2;
+  --color-accent: #ff7a4a;
+  --color-accent-hover: #ff9869;
+  --color-success: #a2e79a;
+  --color-error: #ff7188;
+  --color-warning: #ffd166;
+  --color-hotpink: #ff3e92;
+  --color-electric: #9a75ff;
+  --font-sans: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, monospace;
 }
 
-html {
-  color-scheme: light;
-}
+html { color-scheme: dark; }
 
 body {
-  background: var(--color-background);
+  position: relative;
+  isolation: isolate;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background: #09070b;
   color: var(--color-foreground);
   font-family: var(--font-sans);
 }
 
-/* Focus ring — visible, for keyboard users. */
-:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: -24%;
+  content: "";
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 12% 12%, rgb(255 62 146 / 20%), transparent 30%),
+    radial-gradient(ellipse at 86% 8%, rgb(154 117 255 / 17%), transparent 30%),
+    radial-gradient(ellipse at 78% 86%, rgb(255 122 74 / 15%), transparent 34%),
+    radial-gradient(ellipse at 30% 80%, rgb(94 42 131 / 12%), transparent 32%);
+  filter: blur(22px);
+  animation: brand-aurora 18s ease-in-out infinite alternate;
 }
 
-/* Form fields already have a border, so keep the focus ring hugging the
-   field instead of bleeding up toward the label above it. */
+@font-face {
+  font-family: "Geist";
+  src: url("/fonts/geist-latin.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@keyframes brand-aurora {
+  0% { transform: translate3d(-1%, -1%, 0) rotate(-2deg) scale(1); }
+  100% { transform: translate3d(2%, 1%, 0) rotate(2deg) scale(1.07); }
+}
+
+@keyframes dashboard-ambience {
+  0% { background-position: 0% 0%, 100% 0%, 0% 100%; }
+  100% { background-position: 10% 8%, 92% 12%, 7% 88%; }
+}
+
+@keyframes avatar-ring-spin {
+  to { transform: rotate(1turn); }
+}
+
+@keyframes demo-bar-rise {
+  from { transform: scaleY(.04); filter: brightness(1.8); }
+  to { transform: scaleY(1); filter: brightness(1); }
+}
+
+@keyframes brand-pulse {
+  0%, 100% { box-shadow: 0 0 0 1px rgb(255 122 74 / 55%), 0 0 22px rgb(255 62 146 / 34%), 0 0 44px rgb(154 117 255 / 18%); }
+  50% { box-shadow: 0 0 0 1px rgb(255 62 146 / 72%), 0 0 32px rgb(255 62 146 / 48%), 0 0 58px rgb(154 117 255 / 26%); }
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-hotpink);
+  outline-offset: 3px;
+}
+
 input:focus-visible,
 textarea:focus-visible,
-select:focus-visible {
-  outline-offset: 1px;
-}
+select:focus-visible { outline-offset: 1px; }
 
-/* iOS Safari zooms the whole page in when a focused field's text is under 16px,
-   and never zooms back out. Fields are text-sm (14px) throughout, so raise them
-   to 16px on phones and leave the desktop sizing alone. */
 @media (max-width: 640px) {
   input,
   textarea,
-  select {
-    font-size: 16px;
-  }
+  select { font-size: 16px; }
 }
 
-/* Panel — flat container. Replaces .glass / .glass-strong. */
-.panel {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-}
-
-/* Kept as no-op aliases so existing markup degrades to plain surfaces
-   instead of breaking. Prefer .panel in new code. */
+.panel,
 .glass,
 .glass-strong {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
+  border: 1px solid rgb(255 122 74 / 24%);
+  border-radius: 1rem;
+  background: linear-gradient(145deg, rgb(37 23 36 / 94%) 0%, rgb(18 15 23 / 96%) 58%, rgb(18 14 18 / 97%) 100%);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 32%), inset 0 1px 0 rgb(255 255 255 / 4%);
+  backdrop-filter: blur(14px);
+  transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
+}
+
+@media (hover: hover) {
+  .panel:hover,
+  .glass:hover,
+  .glass-strong:hover {
+    transform: translateY(-2px);
+    border-color: rgb(255 62 146 / 48%);
+    box-shadow: 0 18px 54px rgb(0 0 0 / 40%), 0 0 26px rgb(255 62 146 / 9%);
+  }
 }
 
 .gradient-mesh {
-  background: none;
+  background-image: radial-gradient(ellipse at 70% 0%, rgb(255 62 146 / 20%), transparent 48%), radial-gradient(ellipse at 5% 80%, rgb(154 117 255 / 14%), transparent 42%);
 }
 
-.animate-fade-in,
-.animate-slide-in,
-.animate-pulse-glow,
-.stagger > * {
-  animation: none;
+.dashboard-shell {
+  background-color: #09070b;
+  background-image:
+    radial-gradient(ellipse at 14% 0%, rgb(255 62 146 / 11%), transparent 35%),
+    radial-gradient(ellipse at 92% 15%, rgb(154 117 255 / 10%), transparent 32%),
+    radial-gradient(ellipse at 34% 100%, rgb(255 122 74 / 7%), transparent 38%);
+  background-attachment: fixed;
+  background-size: 120% 120%;
+  animation: dashboard-ambience 22s ease-in-out infinite alternate;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
+.demo-bar {
+  transform-origin: bottom;
+  animation: demo-bar-rise 850ms cubic-bezier(.16, 1, .3, 1) both;
+  filter: drop-shadow(0 0 8px rgb(255 62 146 / 24%));
+}
+
+button,
+a,
+select {
+  transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+
+.bg-accent.text-white { color: #1b100d; }
+
+/* Distinct signature elements in the navigation and dashboard chrome. */
+.brand-avatar-frame {
+  position: relative;
+  isolation: isolate;
+  border-radius: 1.15rem;
+  padding: 3px;
+  background: conic-gradient(from 0deg, #ff7a4a, #ffd166, #ff3e92, #9a75ff, #ff7a4a);
+  animation: brand-pulse 3.8s ease-in-out infinite;
+}
+
+.brand-avatar-frame::before {
+  position: absolute;
+  z-index: -1;
+  inset: -5px;
+  border-radius: 1.35rem;
+  content: "";
+  background: conic-gradient(from 0deg, #ff7a4a, #ffd166, #ff3e92, #9a75ff, #ff7a4a);
+  filter: blur(10px);
+  opacity: .62;
+  animation: avatar-ring-spin 8s linear infinite;
+}
+
+.dashboard-top-bar {
+  position: sticky;
+  background: rgb(12 9 14 / 88%);
+  backdrop-filter: blur(18px);
+}
+
+.brand-sidebar {
+  background:
+    radial-gradient(ellipse at 0% 0%, rgb(255 62 146 / 11%), transparent 45%),
+    linear-gradient(180deg, #17101a 0%, #100e14 46%, #100b0f 100%);
+  border-color: rgb(255 62 146 / 18%);
+  box-shadow: 18px 0 50px rgb(0 0 0 / 24%);
+}
+
+.dashboard-top-bar::after {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  height: 1px;
+  content: "";
+  background: linear-gradient(90deg, transparent, #ff7a4a 25%, #ff3e92 65%, #9a75ff 86%, transparent);
+  opacity: .8;
 }
 
 @theme inline {
@@ -97,12 +199,15 @@ select:focus-visible {
 }
 .zernio-sponsor { background: var(--color-zernio-cream); color: var(--color-zernio-charcoal); border-color: var(--color-zernio-border); }
 .zernio-action { background: var(--color-zernio-coral); color: white; }
+.zernio-sponsor { font-family: "Geist", sans-serif; }
 
-@font-face {
-  font-family: 'Zernio Geist';
-  src: url('/fonts/geist-latin.woff2') format('woff2');
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: swap;
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
-.zernio-sponsor { font-family: 'Zernio Geist', sans-serif; }

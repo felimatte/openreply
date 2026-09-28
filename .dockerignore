@@ -1,8 +1,8 @@
 node_modules
 .next
 .git
-.env
-.env.local
+.env*
+!.env.example
 __tests__
 docs
 *.md

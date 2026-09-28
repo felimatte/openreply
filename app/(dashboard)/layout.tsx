@@ -27,16 +27,23 @@ export default async function DashboardLayout({
     session.user.id,
     session.user.email
   );
-  const accounts = await prisma.instagramAccount.findMany({
-    where: { workspaceId: workspace.id },
-    orderBy: { connectedAt: "desc" },
-    select: { username: true },
-  });
+  const [accounts, user] = await Promise.all([
+    prisma.instagramAccount.findMany({
+      where: { workspaceId: workspace.id },
+      orderBy: { connectedAt: "desc" },
+      select: { username: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { image: true },
+    }),
+  ]);
 
   return (
     <I18nProvider locale={locale}>
       <DashboardShell
         workspaceName={workspace.name}
+        profileImage={user?.image ?? null}
         instagramUsername={accounts[0]?.username ?? null}
         instagramAccountCount={accounts.length}
       >

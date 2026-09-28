@@ -92,7 +92,11 @@ export default function DashboardPage() {
       {/* Greeting header */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground sm:text-3xl">
+          <p className="mb-2 flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-[0.24em] text-hotpink">
+            <span className="h-px w-6 bg-gradient-to-r from-accent to-hotpink" />
+            Felimattee creator system
+          </p>
+          <h1 className="bg-gradient-to-r from-white via-[#ffe5dc] to-accent bg-clip-text text-3xl font-black tracking-tight text-transparent sm:text-4xl">
             {t("Hello, {name}!", { name: stats?.userName ?? t("there") })}
           </h1>
           <p className="mt-1 text-sm text-muted">

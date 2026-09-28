@@ -44,7 +44,7 @@ export default function TopBar({
 
   return (
     <header
-      className="sticky top-0 z-30 flex items-center justify-between gap-3 px-4 lg:px-8 border-b border-border bg-background"
+      className="dashboard-top-bar sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border px-4 lg:px-8"
       // Installed to the home screen the app starts at the very top of the
       // display, so without this the title sits under the clock and battery.
       // The inset is 0 in a browser tab and on desktop.
@@ -56,7 +56,7 @@ export default function TopBar({
       <div className="flex min-w-0 items-center gap-3 sm:gap-4">
         <button
           onClick={onMenuClick}
-          className="lg:hidden shrink-0 px-2.5 py-1.5 rounded border border-border text-sm text-muted hover:text-foreground"
+          className="lg:hidden shrink-0 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-muted hover:border-border-hover hover:text-foreground"
           aria-label={t("Toggle sidebar")}
         >
           {t("Menu")}
@@ -65,7 +65,7 @@ export default function TopBar({
       </div>
 
       {instagramAccountCount > 0 ? (
-        <p className="shrink-0 truncate text-sm text-muted">
+        <p className="shrink-0 truncate rounded-full border border-border bg-surface px-3 py-1.5 font-mono text-xs text-muted">
           {instagramAccountCount > 1
             ? t("{count} accounts", { count: instagramAccountCount })
             : `@${instagramUsername}`}
@@ -73,7 +73,7 @@ export default function TopBar({
       ) : (
         <a
           href="/api/instagram/connect"
-          className="shrink-0 whitespace-nowrap text-sm font-medium px-3 py-1.5 rounded bg-accent text-white hover:bg-accent-hover"
+          className="shrink-0 whitespace-nowrap rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white shadow-[0_6px_18px_rgba(232,121,90,0.16)] hover:-translate-y-0.5 hover:bg-accent-hover"
         >
           {/* Full label needs more room than a 360px header has to spare. */}
           <span className="sm:hidden">{t("Connect")}</span>
