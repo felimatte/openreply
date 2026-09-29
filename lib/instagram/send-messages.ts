@@ -216,6 +216,58 @@ export async function sendDirectMessage({
   return sendZernioMessage({ context, recipientId: userId, text: message });
 }
 
+// Zernio's messaging endpoints take buttons but no quick replies, so through
+// Zernio the question goes out as plain text and the person types the answer.
+export async function sendDirectMessageWithQuickReplies({
+  context,
+  instagramAccountId,
+  userId,
+  text,
+  quickReplies,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  userId: string;
+  text: string;
+  quickReplies: meta.QuickReply[];
+}) {
+  if (context.provider === "META")
+    return meta.sendDirectMessageWithQuickReplies(
+      context.accessToken,
+      instagramAccountId,
+      userId,
+      text,
+      quickReplies
+    );
+  return sendZernioMessage({ context, recipientId: userId, text });
+}
+
+export async function sendPrivateReplyWithQuickReplies({
+  context,
+  instagramAccountId,
+  commentId,
+  text,
+  quickReplies,
+  postId,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  commentId: string;
+  text: string;
+  quickReplies: meta.QuickReply[];
+  postId?: string;
+}) {
+  if (context.provider === "META")
+    return meta.sendPrivateReplyWithQuickReplies(
+      context.accessToken,
+      instagramAccountId,
+      commentId,
+      text,
+      quickReplies
+    );
+  return sendZernioMessage({ context, commentId, postId, text });
+}
+
 export async function sendDirectMessageWithLinkButton({
   context,
   instagramAccountId,

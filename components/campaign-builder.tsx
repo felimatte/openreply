@@ -6,10 +6,10 @@
  * Two-pane campaign editor: a control panel on the left and a live phone
  * preview on the right. Used for both creating and editing a campaign.
  *
- * Turn 1 wires the fully-functional pieces: trigger scope (specific / any /
- * next post), match mode (specific words / any word), the opening + reveal DM
- * text, public reply, and the tracked link. Button-driven delivery and the
- * follow / email / follow-up steps arrive in later turns.
+ * Covers the trigger scope (specific / any / next post), match mode (specific
+ * words / any word), the opening, follow-gate and reveal DMs, public reply,
+ * tracked links, the follow-up, and the contact steps: a question that
+ * collects an email, phone number or free-text answer, and tags.
  */
 
 import { useI18n } from "@/lib/i18n/provider";
@@ -27,6 +27,12 @@ import {
 
 type TriggerScope = "specific" | "any" | "next";
 type MatchMode = "specific" | "any";
+type AskType = "EMAIL" | "PHONE" | "TEXT";
+
+interface ContactOptions {
+  tags: { name: string }[];
+  fields: { key: string; label: string }[];
+}
 
 interface LoadedCampaign {
   id: string;
@@ -52,6 +58,14 @@ interface LoadedCampaign {
   publicReplyEnabled: boolean;
   publicReplyMessage: string | null;
   publicReplyMessages: string[];
+  askEnabled?: boolean;
+  askType?: AskType | null;
+  askMessage?: string | null;
+  askRetryMessage?: string | null;
+  askFieldKey?: string | null;
+  askAfterLink?: boolean;
+  askThanksMessage?: string | null;
+  contactTags?: string[];
   isActive: boolean;
   instagramAccountId: string;
   trackedLinks?: { destinationUrl: string; label?: string | null }[];
@@ -183,6 +197,19 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [followUpMessage, setFollowUpMessage] = useState("");
   const [followUpDelayMinutes, setFollowUpDelayMinutes] = useState(0);
 
+  const [askEnabled, setAskEnabled] = useState(false);
+  const [askType, setAskType] = useState<AskType>("EMAIL");
+  const [askMessage, setAskMessage] = useState("");
+  const [askRetryMessage, setAskRetryMessage] = useState("");
+  const [askFieldLabel, setAskFieldLabel] = useState("");
+  const [askAfterLink, setAskAfterLink] = useState(false);
+  const [askThanksMessage, setAskThanksMessage] = useState("");
+  const [contactTagText, setContactTagText] = useState("");
+  const [contactOptions, setContactOptions] = useState<ContactOptions>({
+    tags: [],
+    fields: [],
+  });
+
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
   // CSV import queue. When present, each save advances to the next row instead
@@ -242,15 +269,45 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       .catch(() => setAccounts([]));
   }, []);
 
+  // Existing tags and custom fields, offered as suggestions.
+  useEffect(() => {
+    fetch("/api/contacts/options", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((payload) => {
+        if (payload.success) setContactOptions(payload.data);
+      })
+      .catch(() => {});
+  }, []);
+
   // Prefill when editing.
   useEffect(() => {
     if (mode !== "edit" || !campaignId) return;
-    fetch("/api/automations", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((payload) => {
+    Promise.all([
+      fetch("/api/automations", { cache: "no-store" }).then((r) => r.json()),
+      // Needed to show a free-text question's field by name.
+      fetch("/api/contacts/options", { cache: "no-store" })
+        .then((r) => r.json())
+        .catch(() => null),
+    ])
+      .then(([payload, options]) => {
         if (!payload.success) return setNotFound(true);
         const c = (payload.data as LoadedCampaign[]).find((x) => x.id === campaignId);
         if (!c) return setNotFound(true);
+        const fields: ContactOptions["fields"] = options?.success
+          ? options.data.fields
+          : [];
+        setAskEnabled(c.askEnabled ?? false);
+        setAskType(c.askType ?? "EMAIL");
+        setAskMessage(c.askMessage ?? "");
+        setAskRetryMessage(c.askRetryMessage ?? "");
+        setAskFieldLabel(
+          c.askFieldKey
+            ? fields.find((field) => field.key === c.askFieldKey)?.label ?? c.askFieldKey
+            : ""
+        );
+        setAskAfterLink(c.askAfterLink ?? false);
+        setAskThanksMessage(c.askThanksMessage ?? "");
+        setContactTagText((c.contactTags ?? []).join(", "));
         setName(c.name);
         setSelectedAccountId(c.instagramAccountId);
         setTriggerScope(
@@ -396,6 +453,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     if (!dmMessage.trim()) return setError(t("Add the DM with the link."));
     if (openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError(t("Your opening DM needs a message and a button label."));
+    if (askEnabled && !askMessage.trim())
+      return setError(t("Write the question you want to ask."));
+    if (askEnabled && askType === "TEXT" && !askFieldLabel.trim())
+      return setError(t("Name the field the answer is saved in."));
 
     setSaving(true);
 
@@ -429,6 +490,17 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       followUpEnabled,
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
       followUpDelayMinutes: followUpEnabled ? followUpDelayMinutes : 0,
+      askEnabled,
+      askType: askEnabled ? askType : null,
+      askMessage: askEnabled ? askMessage.trim() : null,
+      askRetryMessage: askEnabled && askType !== "TEXT" ? askRetryMessage.trim() : null,
+      askFieldLabel: askEnabled && askType === "TEXT" ? askFieldLabel.trim() : null,
+      askAfterLink: askEnabled && askAfterLink,
+      askThanksMessage: askEnabled && askAfterLink ? askThanksMessage.trim() : null,
+      contactTags: contactTagText
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean),
       isActive: activeValue,
     };
 
@@ -976,6 +1048,132 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             )}
           </div>
         </Section>
+
+        <Section title={t("Contacts")}>
+          <div className="rounded-lg border border-border p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-foreground">{t("ask for their data")}</span>
+              <Toggle on={askEnabled} onToggle={() => setAskEnabled(!askEnabled)} />
+            </div>
+            {askEnabled && (
+              <div className="mt-3 space-y-3">
+                <div className="grid grid-cols-3 gap-2">
+                  {(
+                    [
+                      ["EMAIL", t("Email")],
+                      ["PHONE", t("Phone")],
+                      ["TEXT", t("Other")],
+                    ] as const
+                  ).map(([value, label]) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setAskType(value)}
+                      className={`rounded-lg border px-2 py-1.5 text-sm transition-colors ${
+                        askType === value
+                          ? "border-accent bg-accent/5 text-foreground"
+                          : "border-border text-muted hover:border-border-hover"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {askType === "TEXT" && (
+                  <div className="space-y-1">
+                    <input
+                      value={askFieldLabel}
+                      onChange={(e) => setAskFieldLabel(e.target.value)}
+                      list="contact-field-suggestions"
+                      placeholder={t("Save the answer as (e.g. City)")}
+                      maxLength={40}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                    />
+                    <datalist id="contact-field-suggestions">
+                      {contactOptions.fields.map((field) => (
+                        <option key={field.key} value={field.label} />
+                      ))}
+                    </datalist>
+                  </div>
+                )}
+                <textarea
+                  value={askMessage}
+                  onChange={(e) => setAskMessage(e.target.value)}
+                  placeholder={
+                    askType === "EMAIL"
+                      ? t("Where should I send it? Drop your email 👇")
+                      : askType === "PHONE"
+                        ? t("What's your WhatsApp number? 📲")
+                        : t("Which city are you in?")
+                  }
+                  rows={2}
+                  maxLength={1000}
+                  className="w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                />
+                {askType !== "TEXT" && (
+                  <div className="space-y-1">
+                    <input
+                      value={askRetryMessage}
+                      onChange={(e) => setAskRetryMessage(e.target.value)}
+                      placeholder={t("Hmm, that doesn't look right. Could you send it again?")}
+                      maxLength={1000}
+                      className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                    />
+                    <p className="text-xs text-muted">
+                      {askType === "EMAIL"
+                        ? t("Sent when the answer isn't an email. Leave it empty to repeat the question.")
+                        : t("Sent when the answer isn't a phone number. Leave it empty to repeat the question.")}
+                    </p>
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Radio checked={!askAfterLink} onSelect={() => setAskAfterLink(false)}>
+                    {t("before the link — they get it in exchange")}
+                  </Radio>
+                  <Radio checked={askAfterLink} onSelect={() => setAskAfterLink(true)}>
+                    {t("after the link")}
+                  </Radio>
+                </div>
+                {askAfterLink && (
+                  <input
+                    value={askThanksMessage}
+                    onChange={(e) => setAskThanksMessage(e.target.value)}
+                    placeholder={t("Thanks! Got it 🙌 (optional)")}
+                    maxLength={1000}
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                  />
+                )}
+                <p className="text-xs text-muted">
+                  {askType === "TEXT"
+                    ? t("Any reply counts as the answer.")
+                    : t("On a phone, Instagram offers the email or number from their profile with one tap. They can always type it.")}{" "}
+                  {t("While the question waits, their reply is read as the answer, never as a keyword. After 3 tries we stop asking and carry on, so nobody gets stuck.")}
+                  {askAfterLink && followUpEnabled
+                    ? ` ${t("The thank-you message waits for their answer.")}`
+                    : ""}
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="mt-3 space-y-2 rounded-lg border border-border p-3">
+            <span className="text-sm text-foreground">{t("tag them")}</span>
+            <input
+              value={contactTagText}
+              onChange={(e) => setContactTagText(e.target.value)}
+              list="contact-tag-suggestions"
+              placeholder={t("e.g. guide-october, vip")}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+            />
+            <datalist id="contact-tag-suggestions">
+              {contactOptions.tags.map((tag) => (
+                <option key={tag.name} value={tag.name} />
+              ))}
+            </datalist>
+            <p className="text-xs text-muted">
+              {t("Added to everyone this campaign fires for. Use commas to separate tags.")}
+            </p>
+          </div>
+        </Section>
       </div>
 
       {/* Right: preview */}
@@ -1010,6 +1208,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             followUpEnabled={followUpEnabled}
             followUpMessage={followUpMessage}
             followUpDelayMinutes={followUpDelayMinutes}
+            askEnabled={askEnabled}
+            askType={askType}
+            askMessage={askMessage}
+            askAfterLink={askAfterLink}
+            askThanksMessage={askThanksMessage}
           />
         </div>
       </div>

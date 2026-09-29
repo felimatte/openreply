@@ -47,6 +47,9 @@ export interface ProcessPostbackJob {
   payload: string;
   mid?: string;
   fallback?: boolean;
+  // Set when the person answered the question the campaign asks in exchange
+  // for its link (or ran out of tries): deliver the link, don't ask again.
+  answered?: boolean;
 }
 
 // Scheduled after the link is delivered, to send the appreciation follow-up.
@@ -68,6 +71,8 @@ export interface ProcessMessageJob {
   messageId: string;
   messageText: string;
   senderId: string;
+  // The tapped quick reply's payload, when the message is one.
+  quickReplyPayload?: string;
 }
 
 export type DmQueueJob =
@@ -79,6 +84,39 @@ export type DmQueueJob =
 export const POSTBACK_JOB_NAME = "process-postback";
 export const FOLLOWUP_JOB_NAME = "process-followup";
 export const MESSAGE_JOB_NAME = "process-message";
+
+// ─── Contact sync queue ─────────────────────────────────────────────────────────
+
+// Sends contact changes to the workspace's sheet or webhook. A queue of its own,
+// so a slow spreadsheet never holds up a DM.
+export interface ContactSyncJob {
+  workspaceId: string;
+  contactIds: string[];
+  // The contacts were deleted: remove their rows instead of updating them.
+  deleted?: boolean;
+}
+
+export const CONTACT_SYNC_QUEUE_NAME = "contact-sync";
+export const CONTACT_SYNC_JOB_NAME = "sync-contacts";
+
+let contactSyncQueue: Queue<ContactSyncJob> | null = null;
+
+export function getContactSyncQueue(): Queue<ContactSyncJob> {
+  if (!contactSyncQueue) {
+    contactSyncQueue = new Queue<ContactSyncJob>(CONTACT_SYNC_QUEUE_NAME, {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        removeOnComplete: { count: 200 },
+        removeOnFail: { count: 500 },
+        // 1, 2, 4 and 8 minutes: long enough to ride out a sheet that is
+        // briefly unavailable, short enough that the sheet stays current.
+        attempts: 5,
+        backoff: { type: "exponential", delay: 60_000 },
+      },
+    });
+  }
+  return contactSyncQueue;
+}
 
 let dmQueue: Queue<DmQueueJob> | null = null;
 

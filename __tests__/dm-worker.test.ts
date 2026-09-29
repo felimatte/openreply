@@ -110,6 +110,18 @@ vi.mock("@/lib/ops/worker-health", () => ({
   recordWorkerAlert: vi.fn(),
 }));
 
+// Contacts are recorded, but none of these campaigns ask a question, so the
+// DM flows below are the ones that existed before contacts.
+vi.mock("@/lib/contacts/store", () => ({
+  trackContact: vi.fn(async () => ({ id: "contact_1", username: "commenter_user" })),
+  findOpenQuestion: vi.fn(async () => null),
+  openQuestion: vi.fn(),
+  closeQuestion: vi.fn(),
+  claimQuestion: vi.fn(),
+  recordFailedAnswer: vi.fn(),
+  saveContactAnswer: vi.fn(),
+}));
+
 vi.mock("@/lib/queue/client", () => ({
   getDMQueue: () => ({
     add: mockQueueAdd,

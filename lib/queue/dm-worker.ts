@@ -22,9 +22,12 @@ import {
   sendDirectMessage,
   sendDirectMessageWithButton,
   sendDirectMessageWithLinkButton,
+  sendDirectMessageWithQuickReplies,
   sendPrivateReply,
   sendPrivateReplyWithButton,
   sendPrivateReplyWithLinkButton,
+  sendPrivateReplyWithQuickReplies,
+  type QuickReply,
 } from "@/lib/instagram/provider";
 import {
   createInstagramContext,
@@ -44,6 +47,18 @@ import {
   renderMessageWithoutLink,
 } from "@/lib/tracking/message";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
+import { parseAnswer, type ContactDataType } from "@/lib/contacts/answers";
+import {
+  claimQuestion,
+  closeQuestion,
+  findOpenQuestion,
+  openQuestion,
+  recordFailedAnswer,
+  saveContactAnswer,
+  trackContact,
+  type OpenQuestion,
+  type TrackedContact,
+} from "@/lib/contacts/store";
 
 import {
   ZernioApiError,
@@ -212,6 +227,325 @@ async function sendRevealDirectMessage({
   }
 }
 
+// Meta's cap on a button template's text, and on a plain text message.
+const BUTTON_TEXT_LIMIT = 640;
+const TEXT_MESSAGE_LIMIT = 1000;
+
+// An answer that still doesn't parse after this many tries ends the question,
+// so nobody is left stuck in front of it.
+const MAX_ANSWER_ATTEMPTS = 3;
+
+type AskAutomation = {
+  id: string;
+  askEnabled?: boolean | null;
+  askType?: ContactDataType | null;
+  askMessage?: string | null;
+  askRetryMessage?: string | null;
+  askFieldKey?: string | null;
+  askAfterLink?: boolean | null;
+  askThanksMessage?: string | null;
+};
+
+type AskStep = {
+  type: ContactDataType;
+  message: string;
+  fieldKey: string | null;
+  afterLink: boolean;
+};
+
+/** The campaign's question, or null when it doesn't ask for anything. */
+function askStepFor(automation: AskAutomation): AskStep | null {
+  const message = automation.askMessage?.trim();
+  if (!automation.askEnabled || !automation.askType || !message) return null;
+  if (automation.askType === "TEXT" && !automation.askFieldKey) return null;
+  return {
+    type: automation.askType,
+    message,
+    fieldKey: automation.askFieldKey ?? null,
+    afterLink: Boolean(automation.askAfterLink),
+  };
+}
+
+/**
+ * The quick reply that offers the email or phone number on the person's
+ * Instagram profile. A free-text question gets none.
+ */
+function quickRepliesFor(
+  type: ContactDataType,
+  automationId: string
+): QuickReply[] | null {
+  if (type === "EMAIL") {
+    return [
+      { content_type: "user_email", title: "Email", payload: `ask_email:${automationId}` },
+    ];
+  }
+  if (type === "PHONE") {
+    return [
+      {
+        content_type: "user_phone_number",
+        title: "Phone",
+        payload: `ask_phone:${automationId}`,
+      },
+    ];
+  }
+  return null;
+}
+
+/**
+ * A message with the question under it, or null when both don't fit in one
+ * Instagram message. Nothing is ever cut: a cut could take the link with it.
+ */
+function withQuestion(text: string, question: string, limit: number): string | null {
+  const combined = `${text}\n\n${question}`;
+  return combined.length <= limit ? combined : null;
+}
+
+/**
+ * Ask a question in an open conversation, with the email or phone quick reply
+ * when there is one. If Meta rejects the quick reply, the question goes out as
+ * plain text: the answer can always be typed.
+ */
+async function sendQuestionDirectMessage({
+  accessToken,
+  instagramAccountId,
+  userId,
+  text,
+  quickReplies,
+}: {
+  accessToken: InstagramContext;
+  instagramAccountId: string;
+  userId: string;
+  text: string;
+  quickReplies: QuickReply[] | null;
+}): Promise<void> {
+  const sendText = () =>
+    sendDirectMessage({
+      context: accessToken,
+      instagramAccountId,
+      userId,
+      message: text,
+    });
+  if (!quickReplies) {
+    await sendText();
+    return;
+  }
+  try {
+    await sendDirectMessageWithQuickReplies({
+      context: accessToken,
+      instagramAccountId,
+      userId,
+      text,
+      quickReplies,
+    });
+  } catch (error) {
+    if (!isTemplateRejection(error)) throw error;
+    console.log(
+      "[DM Worker] Quick reply rejected, asking in plain text:",
+      formatError(error)
+    );
+    try {
+      await sendText();
+    } catch {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Ask a question as the one private reply a comment allows. Meta does not
+ * document quick replies on private replies, so a rejected one falls back to
+ * plain text, exactly as a rejected button template does.
+ */
+async function sendQuestionAsPrivateReply({
+  accessToken,
+  instagramAccountId,
+  commentId,
+  postId,
+  text,
+  quickReplies,
+}: {
+  accessToken: InstagramContext;
+  instagramAccountId: string;
+  commentId: string;
+  postId: string;
+  text: string;
+  quickReplies: QuickReply[] | null;
+}): Promise<void> {
+  const sendText = () =>
+    sendPrivateReply({
+      context: accessToken,
+      instagramAccountId,
+      commentId,
+      message: text,
+      postId,
+    });
+  if (!quickReplies) {
+    await sendText();
+    return;
+  }
+  try {
+    await sendPrivateReplyWithQuickReplies({
+      context: accessToken,
+      instagramAccountId,
+      commentId,
+      text,
+      quickReplies,
+      postId,
+    });
+  } catch (error) {
+    if (!isTemplateRejection(error)) throw error;
+    console.log(
+      "[DM Worker] Quick reply rejected on a private reply, asking in plain text:",
+      formatError(error)
+    );
+    try {
+      await sendText();
+    } catch {
+      throw error;
+    }
+  }
+}
+
+type FollowUpAutomation = {
+  id: string;
+  instagramAccountId: string;
+  followUpEnabled?: boolean | null;
+  followUpMessage?: string | null;
+  followUpDelayMinutes?: number | null;
+  instagramAccount: { instagramId: string };
+};
+
+/**
+ * Optional appreciation follow-up: once the link has been delivered, send a
+ * short thank-you. It is scheduled as its own delayed job so it can go out
+ * some minutes later (followUpDelayMinutes) rather than immediately. The
+ * deterministic job id dedupes repeat button taps to one follow-up per user.
+ */
+async function scheduleFollowUp(
+  automation: FollowUpAutomation,
+  userId: string,
+  commenterName: string | null
+): Promise<void> {
+  if (!automation.followUpEnabled || !automation.followUpMessage?.trim()) return;
+  await getDMQueue().add(
+    FOLLOWUP_JOB_NAME,
+    {
+      instagramAccountId: automation.instagramAccount.instagramId,
+      accountConnectionId: automation.instagramAccountId,
+      userId,
+      automationId: automation.id,
+      commenterName,
+    },
+    {
+      delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
+      jobId: `followup_${automation.id}_${userId}`,
+    }
+  );
+}
+
+type RevealStepAutomation = RevealAutomation & AskAutomation & FollowUpAutomation;
+
+/**
+ * The campaign's next step once the conversation is open — after a button
+ * tap, a keyword DM, or a settled question: the link, or, when the campaign
+ * asks for data in exchange for it, the question, with the link following the
+ * answer. A question asked after the link goes out right after it, and then
+ * the follow-up waits for the answer.
+ *
+ * `once` wraps the message this step always sends, so a repeated tap can be
+ * deduplicated; it reports false when that message was already delivered.
+ */
+async function deliverRevealStep({
+  accessToken,
+  automation,
+  userId,
+  commenterName,
+  contactId,
+  skipQuestion = false,
+  context,
+  once = async (send) => {
+    await send();
+    return true;
+  },
+}: {
+  accessToken: InstagramContext;
+  automation: RevealStepAutomation;
+  userId: string;
+  commenterName: string | null;
+  contactId: string | null;
+  skipQuestion?: boolean;
+  context: string;
+  once?: (send: () => Promise<unknown>) => Promise<boolean>;
+}): Promise<boolean> {
+  const ask = contactId && !skipQuestion ? askStepFor(automation) : null;
+  const question = (afterLink: boolean) =>
+    ask && contactId
+      ? openQuestion({
+          contactId,
+          automationId: automation.id,
+          type: ask.type,
+          fieldKey: ask.fieldKey,
+          afterLink,
+        })
+      : Promise.resolve(false);
+  const sendQuestion = () =>
+    sendQuestionDirectMessage({
+      accessToken,
+      instagramAccountId: automation.instagramAccount.instagramId,
+      userId,
+      text: renderMessageWithoutLink({ message: ask?.message ?? "", commenterName }),
+      quickReplies: ask ? quickRepliesFor(ask.type, automation.id) : null,
+    });
+
+  // The question is opened inside `once`, so a repeated tap that `once`
+  // stops never reopens a question the person may already have answered.
+  // It is opened before its message goes out, so an answer typed the moment
+  // it lands still finds it.
+  let asked = false;
+  const delivered = await once(async () => {
+    if (ask && !ask.afterLink && (await question(false))) {
+      asked = true;
+      try {
+        await sendQuestion();
+      } catch (error) {
+        // A question that never arrived must not claim their next DM. One
+        // that may have arrived stays open.
+        if (contactId && !(error instanceof ZernioDeliveryUnconfirmedError)) {
+          await closeQuestion(contactId, automation.id).catch(() => {});
+        }
+        throw error;
+      }
+      return;
+    }
+    await sendRevealDirectMessage({
+      accessToken,
+      automation,
+      userId,
+      commenterName,
+      context,
+    });
+  });
+  if (!delivered || asked) return delivered;
+
+  if (ask?.afterLink && contactId && (await question(true))) {
+    // The link is already out, so a question that fails is logged rather
+    // than retried along with the link, and the follow-up isn't held for it.
+    try {
+      await sendQuestion();
+      return true;
+    } catch (error) {
+      await closeQuestion(contactId, automation.id).catch(() => {});
+      console.log(
+        `[DM Worker] Could not ask the question after the link in ${context}:`,
+        formatError(error)
+      );
+    }
+  }
+
+  await scheduleFollowUp(automation, userId, commenterName);
+  return true;
+}
+
 
 function connectionScope(data: DmQueueJob) {
   return data.accountConnectionId ? { instagramAccountId: data.accountConnectionId } : {};
@@ -298,6 +632,16 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     ) {
       continue;
     }
+
+    // Everyone a campaign fires for becomes a contact, with its tags.
+    const contact = await trackContact({
+      workspaceId: automation.workspaceId,
+      igAccountId: instagramAccountId,
+      igsid: commenterId,
+      username: commenterName,
+      automationId: automation.id,
+      tags: automation.contactTags,
+    });
 
     if (!hasInstagramCredentials(automation.instagramAccount)) {
       await prisma.dmLog.upsert({
@@ -600,6 +944,48 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           : alreadyFollows !== true;
     }
 
+    // A campaign that asks for data asks right where the link would go out.
+    // Asked in exchange for the link, the question is this comment's one
+    // private reply. Asked after the link, it rides in the link's message,
+    // since a private reply allows no second message until they answer, and
+    // only when both fit in one message. It is opened before the send, so an
+    // answer typed the moment it lands still finds it.
+    const ask =
+      contact && !useOpeningDm && !sendFollowPrompt ? askStepFor(automation) : null;
+    const questionText = ask
+      ? renderMessageWithoutLink({ message: ask.message, commenterName })
+      : "";
+    const hasLinks = automation.trackedLinks.length > 0;
+    // The button template's text: its buttons carry the links.
+    const linkText =
+      renderMessageWithoutLink({
+        message: automation.dmMessage,
+        commenterName,
+      }) || "Here's your link:";
+    const plainText = renderMessageWithTracking({
+      message: automation.dmMessage,
+      commenterName,
+      trackedLinks: automation.trackedLinks,
+    });
+    const linkWithQuestion = ask?.afterLink
+      ? withQuestion(
+          hasLinks ? linkText : plainText,
+          questionText,
+          hasLinks ? BUTTON_TEXT_LIMIT : TEXT_MESSAGE_LIMIT
+        )
+      : null;
+    const questionOpen =
+      ask && contact && (!ask.afterLink || linkWithQuestion)
+        ? await openQuestion({
+            contactId: contact.id,
+            automationId: automation.id,
+            type: ask.type,
+            fieldKey: ask.fieldKey,
+            afterLink: ask.afterLink,
+          })
+        : false;
+    let questionPending = questionOpen;
+
     try {
       if (useOpeningDm) {
         const openingText = renderMessageWithTracking({
@@ -634,13 +1020,17 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           payload: `followcheck:${automation.id}`,
           postId: mediaId,
         });
-      } else if (automation.trackedLinks.length > 0) {
+      } else if (questionOpen && ask && !ask.afterLink) {
+        await sendQuestionAsPrivateReply({
+          accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          commentId,
+          postId: mediaId,
+          text: questionText,
+          quickReplies: quickRepliesFor(ask.type, automation.id),
+        });
+      } else if (hasLinks) {
         // Try button template first; if Meta rejects it, fall back to inline links.
-        const bodyText =
-          renderMessageWithoutLink({
-            message: automation.dmMessage,
-            commenterName,
-          }) || "Here's your link:";
         const buttons = buildLinkButtons(
           automation.trackedLinks,
           automation.linkButtonLabel
@@ -651,7 +1041,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
             context: accessToken,
             instagramAccountId: automation.instagramAccount.instagramId,
             commentId: commentId,
-            text: bodyText,
+            text: (questionOpen && linkWithQuestion) || linkText,
             buttons: buttons,
             postId: mediaId,
           });
@@ -665,18 +1055,26 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
             "[DM Worker] Button template rejected, falling back to inline link:",
             formatError(buttonError)
           );
-          const fallbackMessage = buildInlineLinkFallback(
+          const inlineMessage = buildInlineLinkFallback(
             automation.dmMessage,
             commenterName,
             automation.trackedLinks,
-            bodyText
+            linkText
           );
+          const inlineWithQuestion = questionOpen
+            ? withQuestion(inlineMessage, questionText, TEXT_MESSAGE_LIMIT)
+            : null;
+          if (questionOpen && !inlineWithQuestion && contact) {
+            // The links as text and the question don't both fit: the links win.
+            await closeQuestion(contact.id, automation.id).catch(() => {});
+            questionPending = false;
+          }
           try {
             await sendPrivateReply({
               context: accessToken,
               instagramAccountId: automation.instagramAccount.instagramId,
               commentId: commentId,
-              message: fallbackMessage,
+              message: inlineWithQuestion ?? inlineMessage,
               postId: mediaId,
             });
           } catch {
@@ -687,16 +1085,11 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           }
         }
       } else {
-        const dmMessage = renderMessageWithTracking({
-          message: automation.dmMessage,
-          commenterName,
-          trackedLinks: automation.trackedLinks,
-        });
         await sendPrivateReply({
           context: accessToken,
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
-          message: dmMessage,
+          message: (questionOpen && linkWithQuestion) || plainText,
           postId: mediaId,
         });
       }
@@ -715,6 +1108,14 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         },
       });
     } catch (error) {
+      // A question that never arrived must not claim their next DM.
+      if (
+        questionPending &&
+        contact &&
+        !(error instanceof ZernioDeliveryUnconfirmedError)
+      ) {
+        await closeQuestion(contact.id, automation.id).catch(() => {});
+      }
       // The rate slot was reserved before the send; this send did not deliver a
       // DM, so hand the slot back instead of burning it (and burning more on
       // each BullMQ retry) until the hourly TTL expires.
@@ -794,7 +1195,7 @@ async function sendPostbackOnce({
  * IGSID (same id as their comment author id), which we DM directly.
  */
 async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
-  const { instagramAccountId, userId, payload, fallback } = job.data;
+  const { instagramAccountId, userId, payload, fallback, answered } = job.data;
 
   const isFollowCheck = payload.startsWith("followcheck:");
   if (!isFollowCheck && !payload.startsWith("reveal:")) return;
@@ -823,8 +1224,10 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
   }
 
   // Duplicate sends are enabled: every button tap re-sends the reveal
-  // instead of only firing once per person.
-  const dedupeId = `reveal:${userId}`;
+  // instead of only firing once per person. The link that follows an
+  // answered question is logged on its own row.
+  const dedupeId = answered ? `answer:${userId}` : `reveal:${userId}`;
+  const logText = answered ? "(answered question)" : "(button tap)";
 
   if (fallback) {
     const existingReveal = await prisma.dmLog.findUnique({
@@ -848,6 +1251,19 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     select: { commenterName: true },
   });
   const commenterName = openingLog?.commenterName ?? null;
+
+  // A tap is the person writing to the account: it opens Instagram's 24-hour
+  // window. A read receipt doesn't, and an answer was already counted when
+  // its DM arrived.
+  const contact = await trackContact({
+    workspaceId: automation.workspaceId,
+    igAccountId: instagramAccountId,
+    igsid: userId,
+    username: commenterName,
+    inbound: !fallback && !answered,
+    automationId: automation.id,
+    tags: automation.contactTags,
+  });
 
   let accessToken: InstagramContext;
   try {
@@ -931,7 +1347,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         instagramAccountId: automation.instagramAccountId,
         commenterId: userId,
         commenterName,
-        commentText: "(button tap)",
+        commentText: logText,
         commentId: dedupeId,
         status: "SKIPPED_PLAN_LIMIT",
         errorMessage: `Monthly DM limit reached (${usage.limit})`,
@@ -942,16 +1358,15 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
   }
 
   try {
-    const delivered = await sendPostbackOnce({
-      operationId,
-      send: () =>
-        sendRevealDirectMessage({
-          accessToken: accessToken,
-          automation: automation,
-          userId: userId,
-          commenterName: commenterName,
-          context: "postback",
-        }),
+    const delivered = await deliverRevealStep({
+      accessToken,
+      automation,
+      userId,
+      commenterName,
+      contactId: contact?.id ?? null,
+      skipQuestion: Boolean(answered),
+      context: "postback",
+      once: (send) => sendPostbackOnce({ operationId, send }),
     });
     if (!delivered) {
       await releaseWorkspaceDMReservation(
@@ -959,28 +1374,6 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         usage.periodStart,
       );
       return;
-    }
-    // Optional appreciation follow-up: once the link has been delivered, send a
-    // short thank-you. It is scheduled as its own delayed job so it can go out
-    // some minutes later (followUpDelayMinutes) rather than immediately. The
-    // deterministic job id dedupes repeat button taps to one follow-up per user.
-    if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
-      const delayMs =
-        Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000;
-      await getDMQueue().add(
-        FOLLOWUP_JOB_NAME,
-        {
-          instagramAccountId: automation.instagramAccount.instagramId,
-          accountConnectionId: automation.instagramAccountId,
-          userId,
-          automationId: automation.id,
-          commenterName,
-        },
-        {
-          delay: delayMs,
-          jobId: `followup_${automation.id}_${userId}`,
-        },
-      );
     }
     await prisma.dmLog.upsert({
       where: {
@@ -995,7 +1388,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         instagramAccountId: automation.instagramAccountId,
         commenterId: userId,
         commenterName,
-        commentText: "(button tap)",
+        commentText: logText,
         commentId: dedupeId,
         status: "SENT",
         dmSentAt: new Date(),
@@ -1036,7 +1429,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         instagramAccountId: automation.instagramAccountId,
         commenterId: userId,
         commenterName,
-        commentText: "(button tap)",
+        commentText: logText,
         commentId: dedupeId,
         status: "FAILED",
         errorMessage: formatError(error),
@@ -1103,6 +1496,201 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
   }
 }
 
+/** Record whoever sent a DM as a contact of the account it was sent to. */
+async function trackMessageSender(
+  data: ProcessMessageJob
+): Promise<TrackedContact | null> {
+  const account = await prisma.instagramAccount
+    .findUnique({
+      where: { instagramId: data.instagramAccountId },
+      select: { id: true, workspaceId: true },
+    })
+    .catch(() => null);
+  if (!account) return null;
+  if (data.accountConnectionId && account.id !== data.accountConnectionId) {
+    return null;
+  }
+  return trackContact({
+    workspaceId: account.workspaceId,
+    igAccountId: data.instagramAccountId,
+    igsid: data.senderId,
+    inbound: true,
+  });
+}
+
+/**
+ * Read a DM as the answer to the question a campaign is waiting on. Returns
+ * false when nothing is waiting — or its campaign was paused or deleted — so
+ * the DM is handled like any other.
+ */
+async function answerOpenQuestion(
+  job: Job<ProcessMessageJob>,
+  contact: TrackedContact
+): Promise<boolean> {
+  const { instagramAccountId, messageId, messageText, senderId } = job.data;
+
+  const question = await findOpenQuestion(contact.id);
+  if (!question) return false;
+
+  // The DM that set this campaign off is not its answer. When the job for it
+  // runs again (a retry after another campaign's send failed), it has to reach
+  // keyword matching again rather than answer the question it just asked.
+  const askedByThisMessage = await prisma.dmLog.findUnique({
+    where: {
+      automationId_commentId: {
+        automationId: question.automationId,
+        commentId: `dm:${messageId}`,
+      },
+    },
+    select: { id: true },
+  });
+  if (askedByThisMessage) return false;
+
+  const automation = await prisma.automation.findFirst({
+    where: {
+      id: question.automationId,
+      isActive: true,
+      ...connectionScope(job.data),
+    },
+    include: { instagramAccount: true },
+  });
+  if (
+    !automation ||
+    automation.instagramAccount.instagramId !== instagramAccountId ||
+    !hasInstagramCredentials(automation.instagramAccount)
+  ) {
+    await closeQuestion(contact.id, question.automationId);
+    return false;
+  }
+
+  // Once claimed, the question is gone. If carrying on fails, it is put back
+  // so the retry of this message reads it as the answer again; every step
+  // after the claim is safe to repeat.
+  const settle = async (answered: boolean, value?: string) => {
+    try {
+      if (answered && value !== undefined) {
+        await saveContactAnswer({
+          contactId: contact.id,
+          type: question.type,
+          fieldKey: question.fieldKey,
+          value,
+        });
+      }
+      await continueAfterQuestion(job, automation, question, contact, answered);
+    } catch (error) {
+      await openQuestion({
+        contactId: contact.id,
+        automationId: question.automationId,
+        type: question.type,
+        fieldKey: question.fieldKey,
+        afterLink: question.afterLink,
+      });
+      throw error;
+    }
+  };
+
+  const answer = parseAnswer(question.type, messageText);
+  if (answer.ok) {
+    // Another message may be answering at the same moment; one wins.
+    if (await claimQuestion(question)) await settle(true, answer.value);
+    return true;
+  }
+
+  const attempts = await recordFailedAnswer(question);
+  if (attempts === null) return true;
+  if (attempts >= MAX_ANSWER_ATTEMPTS) {
+    if (await claimQuestion(question)) await settle(false);
+    return true;
+  }
+
+  // Ask again: the retry message, or the question itself when there is none.
+  const retryText = automation.askRetryMessage?.trim() || automation.askMessage?.trim();
+  if (!retryText) return true;
+  try {
+    const accessToken = await createInstagramContext(
+      automation.instagramAccount,
+      `${job.id}:${automation.id}`
+    );
+    await sendQuestionDirectMessage({
+      accessToken,
+      instagramAccountId: automation.instagramAccount.instagramId,
+      userId: senderId,
+      text: renderMessageWithoutLink({
+        message: retryText,
+        commenterName: contact.username,
+      }),
+      quickReplies: quickRepliesFor(question.type, automation.id),
+    });
+  } catch (error) {
+    console.log("[DM Worker] Could not ask the question again:", formatError(error));
+  }
+  return true;
+}
+
+/**
+ * Carry the campaign on once its question is settled — answered, or given up
+ * on after too many tries, so nobody is left stuck.
+ */
+async function continueAfterQuestion(
+  job: Job<ProcessMessageJob>,
+  automation: FollowUpAutomation & {
+    askThanksMessage: string | null;
+    instagramAccount: Parameters<typeof createInstagramContext>[0];
+  },
+  question: OpenQuestion,
+  contact: TrackedContact,
+  answered: boolean
+): Promise<void> {
+  const { instagramAccountId, messageId, senderId } = job.data;
+
+  if (!question.afterLink) {
+    // The link was waiting on the answer. It goes out as a queued tap, which
+    // brings the tap path's retries, logging and follow-up; the job id keeps a
+    // retried message from sending it twice.
+    await getDMQueue().add(
+      POSTBACK_JOB_NAME,
+      {
+        instagramAccountId,
+        accountConnectionId: automation.instagramAccountId,
+        userId: senderId,
+        payload: `reveal:${automation.id}`,
+        mid: messageId,
+        answered: true,
+      },
+      {
+        jobId: `answer_${instagramAccountId}_${Buffer.from(messageId).toString("base64url")}`,
+      }
+    );
+    return;
+  }
+
+  const thanks = automation.askThanksMessage?.trim();
+  if (answered && thanks) {
+    try {
+      const accessToken = await createInstagramContext(
+        automation.instagramAccount,
+        `${job.id}:${automation.id}`
+      );
+      await sendDirectMessage({
+        context: accessToken,
+        instagramAccountId: automation.instagramAccount.instagramId,
+        userId: senderId,
+        message: renderMessageWithoutLink({
+          message: thanks,
+          commenterName: contact.username,
+        }),
+      });
+    } catch (error) {
+      console.log(
+        "[DM Worker] Could not send the thank-you for an answer:",
+        formatError(error)
+      );
+    }
+  }
+  // With the question after the link, the follow-up waited for this moment.
+  await scheduleFollowUp(automation, senderId, contact.username);
+}
+
 /**
  * Reply to an inbound DM whose text matches a campaign's keywords.
  *
@@ -1113,6 +1701,13 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
  */
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const { instagramAccountId, messageId, messageText, senderId } = job.data;
+
+  // Whoever messages the account is a contact, and their DM opens Instagram's
+  // 24-hour window. If a campaign is waiting on an answer from them, this DM
+  // is that answer: it is handled here and never reaches keyword matching, so
+  // an answer can't set off a campaign.
+  const contact = await trackMessageSender(job.data);
+  if (contact && (await answerOpenQuestion(job, contact))) return;
 
   const automations = await prisma.automation.findMany({
     where: {
@@ -1228,7 +1823,18 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       where: { automationId: automation.id, commenterId: senderId },
       select: { commenterName: true },
     });
-    const commenterName = priorLog?.commenterName ?? null;
+    const commenterName = priorLog?.commenterName ?? contact?.username ?? null;
+
+    // The campaign fired for them: record it as their source and add its tags.
+    if (contact) {
+      await trackContact({
+        workspaceId: automation.workspaceId,
+        igAccountId: instagramAccountId,
+        igsid: senderId,
+        automationId: automation.id,
+        tags: automation.contactTags,
+      });
+    }
 
     // Follow gate: anyone not confirmed as a follower gets the prompt instead of
     // the link, with the same `followcheck:` button that re-verifies on tap.
@@ -1288,33 +1894,18 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           payload: `followcheck:${automation.id}`,
         });
       } else {
-        await sendRevealDirectMessage({
-          accessToken: accessToken,
-          automation: automation,
+        // The link (or the question asked in exchange for it) goes out, and
+        // the appreciation follow-up applies here exactly as it does after a
+        // button tap. Not behind the follow prompt — no link went out yet in
+        // that branch.
+        await deliverRevealStep({
+          accessToken,
+          automation,
           userId: senderId,
-          commenterName: commenterName,
+          commenterName,
+          contactId: contact?.id ?? null,
           context: "message trigger",
         });
-
-        // The link has been delivered, so the appreciation follow-up applies
-        // here exactly as it does after a button tap. Not scheduled behind the
-        // follow prompt — no link went out yet in that branch.
-        if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
-          await getDMQueue().add(
-            FOLLOWUP_JOB_NAME,
-            {
-              instagramAccountId: automation.instagramAccount.instagramId,
-              accountConnectionId: automation.instagramAccountId,
-              userId: senderId,
-              automationId: automation.id,
-              commenterName,
-            },
-            {
-              delay: Math.max(0, automation.followUpDelayMinutes ?? 0) * 60_000,
-              jobId: `followup_${automation.id}_${senderId}`,
-            }
-          );
-        }
       }
 
       await prisma.dmLog.upsert({

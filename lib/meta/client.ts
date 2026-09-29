@@ -366,6 +366,81 @@ export async function sendDirectMessage(
 }
 
 /**
+ * A quick reply under a message. `user_email` and `user_phone_number` offer the
+ * email or phone number on the person's Instagram profile, sent with one tap;
+ * Instagram hides them when the profile has none, and shows no quick replies
+ * at all on desktop, so the answer can always be typed as well. Up to 13 per
+ * message; titles are capped at 20 characters by Meta.
+ */
+export interface QuickReply {
+  content_type: "text" | "user_email" | "user_phone_number";
+  title: string;
+  payload: string;
+}
+
+function toQuickReplies(quickReplies: QuickReply[]) {
+  return quickReplies
+    .slice(0, 13)
+    .map((reply) => ({ ...reply, title: reply.title.slice(0, 20) }));
+}
+
+/** Send a text direct message with quick replies under it. */
+export async function sendDirectMessageWithQuickReplies(
+  accessToken: string,
+  instagramAccountId: string,
+  userId: string,
+  text: string,
+  quickReplies: QuickReply[]
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: { text, quick_replies: toQuickReplies(quickReplies) },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+/**
+ * Send a private reply to a comment with quick replies under it. Meta does not
+ * document quick replies on private replies, so callers fall back to plain
+ * text when this is rejected.
+ */
+export async function sendPrivateReplyWithQuickReplies(
+  accessToken: string,
+  instagramAccountId: string,
+  commentId: string,
+  text: string,
+  quickReplies: QuickReply[]
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${instagramAccountId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient: { comment_id: commentId },
+        message: { text, quick_replies: toQuickReplies(quickReplies) },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+/**
  * Send a direct message as a button template with up to 3 web_url buttons —
  * the reveal message plus tappable link buttons (cleaner than inline URLs).
  */

@@ -43,9 +43,21 @@ interface CampaignPreviewProps {
   followUpEnabled: boolean;
   followUpMessage: string;
   followUpDelayMinutes?: number;
+  askEnabled?: boolean;
+  askType?: "EMAIL" | "PHONE" | "TEXT";
+  askMessage?: string;
+  askAfterLink?: boolean;
+  askThanksMessage?: string;
 }
 
 const SAMPLE_USER = "username";
+
+// A made-up answer so the preview shows the whole exchange.
+const SAMPLE_ANSWERS = {
+  EMAIL: "you@example.com",
+  PHONE: "+54 9 11 2345-6789",
+  TEXT: "…",
+} as const;
 
 /* ----------------------------- icons ----------------------------- */
 
@@ -328,6 +340,11 @@ function DmScreen({
   followUpDelayMinutes = 0,
   linkUrl,
   inboundMessage,
+  askEnabled = false,
+  askType = "EMAIL",
+  askMessage = "",
+  askAfterLink = false,
+  askThanksMessage = "",
 }: {
   username: string;
   avatarUrl: string | null;
@@ -348,8 +365,55 @@ function DmScreen({
   followUpDelayMinutes?: number;
   // Present on the keyword-trigger thread: the DM the user sends to start it.
   inboundMessage?: string;
+  askEnabled?: boolean;
+  askType?: "EMAIL" | "PHONE" | "TEXT";
+  askMessage?: string;
+  askAfterLink?: boolean;
+  askThanksMessage?: string;
 }) {
   const { t } = useI18n();
+  const question = askEnabled
+    ? askMessage.trim()
+      ? askMessage.replace(/\{username\}/g, SAMPLE_USER)
+      : t("Your question…")
+    : "";
+  // A comment's private reply allows no second message until they answer, so
+  // a question after the link rides in the link's own message there.
+  const questionInReveal =
+    Boolean(question) &&
+    askAfterLink &&
+    !openingDmEnabled &&
+    !requireFollow &&
+    inboundMessage === undefined;
+  const exchange = question
+    ? (
+        <>
+          {!questionInReveal && (
+            <div className="flex items-end gap-2">
+              <Avatar url={avatarUrl} size={24} />
+              <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-zinc-800 px-3 py-2">
+                <p className="whitespace-pre-wrap text-sm">{question}</p>
+              </div>
+            </div>
+          )}
+          <div className="flex justify-end">
+            <div className="max-w-[80%] rounded-2xl rounded-br-md bg-accent px-3 py-2 text-sm">
+              {SAMPLE_ANSWERS[askType]}
+            </div>
+          </div>
+          {askAfterLink && askThanksMessage.trim() && (
+            <div className="flex items-end gap-2">
+              <Avatar url={avatarUrl} size={24} />
+              <div className="max-w-[80%] rounded-2xl rounded-bl-md bg-zinc-800 px-3 py-2">
+                <p className="whitespace-pre-wrap text-sm">
+                  {askThanksMessage.replace(/\{username\}/g, SAMPLE_USER)}
+                </p>
+              </div>
+            </div>
+          )}
+        </>
+      )
+    : null;
   return (
     <div className="flex h-full flex-col text-white">
       <StatusBar />
@@ -410,6 +474,7 @@ function DmScreen({
             </div>
           </>
         )}
+        {!askAfterLink && exchange}
         {(() => {
           const resolved = revealMessage.replace(/\{username\}/g, SAMPLE_USER);
           const hasToken = resolved.includes("{link}");
@@ -421,13 +486,14 @@ function DmScreen({
             <div className="flex items-end gap-2">
               <Avatar url={avatarUrl} size={24} />
               <div className="max-w-[80%] overflow-hidden rounded-2xl rounded-bl-md bg-zinc-800">
-                {(!showCard || bodyText) && (
+                {(!showCard || bodyText || questionInReveal) && (
                   <p className="whitespace-pre-wrap px-3 py-2 text-sm">
                     {!revealMessage
                       ? t("Write a message")
                       : showCard
                         ? bodyText
                         : renderMessage(revealMessage, hasLink, linkUrl, t("your link"))}
+                    {questionInReveal && `\n\n${question}`}
                   </p>
                 )}
                 {showCard && (
@@ -446,6 +512,7 @@ function DmScreen({
             </div>
           );
         })()}
+        {askAfterLink && exchange}
         {followUpEnabled && (
           <>
             {followUpDelayMinutes > 0 && (
@@ -535,6 +602,11 @@ export default function CampaignPreview(props: CampaignPreviewProps) {
             followUpMessage={props.followUpMessage}
             followUpDelayMinutes={props.followUpDelayMinutes}
             linkUrl={props.linkUrl}
+            askEnabled={props.askEnabled}
+            askType={props.askType}
+            askMessage={props.askMessage}
+            askAfterLink={props.askAfterLink}
+            askThanksMessage={props.askThanksMessage}
           />
         )}
         {activeTab === "dmTrigger" && (
@@ -558,6 +630,11 @@ export default function CampaignPreview(props: CampaignPreviewProps) {
             followUpDelayMinutes={props.followUpDelayMinutes}
             linkUrl={props.linkUrl}
             inboundMessage={props.sampleComment}
+            askEnabled={props.askEnabled}
+            askType={props.askType}
+            askMessage={props.askMessage}
+            askAfterLink={props.askAfterLink}
+            askThanksMessage={props.askThanksMessage}
           />
         )}
       </Phone>

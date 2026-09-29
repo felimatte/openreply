@@ -12,7 +12,7 @@ export default function DataDeletionPage() {
     <LegalShell
       title="Data Deletion"
       description="Use this page for Meta App Review and customer requests about removing OpenReply account, workspace, Instagram, and campaign data."
-      updatedAt="May 24, 2026"
+      updatedAt="September 29, 2026"
     >
       <section>
         <h2 className="text-xl font-bold text-white">Disconnect Instagram</h2>
@@ -24,12 +24,23 @@ export default function DataDeletionPage() {
       </section>
 
       <section>
+        <h2 className="text-xl font-bold text-white">Delete A Contact</h2>
+        <p className="mt-3">
+          A workspace owner or admin can open Contacts, select the person, and
+          choose Delete contact. This removes their contact record, including
+          any email address, phone number, answers and tags, and removes their
+          row from a connected Google Sheet. If you shared details with a
+          business that uses OpenReply, ask that business to delete them.
+        </p>
+      </section>
+
+      <section>
         <h2 className="text-xl font-bold text-white">Delete Workspace Data</h2>
         <p className="mt-3">
-          To delete workspace, campaign, log, webhook, billing reference, and
-          operational diagnostic data, contact support from the email address
-          used to sign in. Include the workspace name and the Instagram username
-          connected to the workspace.
+          To delete workspace, campaign, contact, log, webhook, billing
+          reference, and operational diagnostic data, contact support from the
+          email address used to sign in. Include the workspace name and the
+          Instagram username connected to the workspace.
         </p>
       </section>
 

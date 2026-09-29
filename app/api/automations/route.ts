@@ -14,6 +14,10 @@ import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
+import {
+  campaignContactFields,
+  resolveCampaignContactSettings,
+} from "@/lib/contacts/campaign-settings";
 
 // This list is read-your-writes (created/imported campaigns must show up
 // immediately), so never cache it at the route or CDN layer.
@@ -64,6 +68,7 @@ const createAutomationSchema = z
     secondaryButtonLabel: z.string().max(20).optional().nullable(),
     isActive: z.boolean().optional().default(true),
     wholeWordMatch: z.boolean().optional().default(true),
+    ...campaignContactFields,
   })
   // A campaign must target a specific post, any post, or the next reel.
   .refine(
@@ -123,6 +128,7 @@ const updateAutomationSchema = z.object({
     .optional()
     .nullable(),
   secondaryButtonLabel: z.string().max(20).optional().nullable(),
+  ...campaignContactFields,
 });
 
 export async function GET(request: NextRequest) {
@@ -345,6 +351,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const contactSettings = await resolveCampaignContactSettings(
+    workspaceId,
+    parsed.data
+  );
+  if ("error" in contactSettings) {
+    return NextResponse.json(
+      { success: false, error: contactSettings.error },
+      { status: 400 }
+    );
+  }
+
   const linkCreates = buildInitialCampaignLinks({
     workspaceId,
     primaryUrl: parsed.data.trackedDestinationUrl,
@@ -410,6 +427,7 @@ export async function POST(request: NextRequest) {
         : null,
       isActive: parsed.data.isActive,
       wholeWordMatch: parsed.data.wholeWordMatch,
+      ...contactSettings.data,
       workspaceId,
       instagramAccountId: instagramAccount.id,
       reportShareSlug: generateReportShareSlug(),
@@ -483,8 +501,34 @@ export async function PATCH(request: NextRequest) {
     trackedDestinationUrl,
     secondaryDestinationUrl,
     secondaryButtonLabel,
+    askEnabled,
+    askType,
+    askMessage,
+    askRetryMessage,
+    askFieldLabel,
+    askAfterLink,
+    askThanksMessage,
+    contactTags,
     ...automationData
   } = parsed.data;
+
+  const contactSettings = await resolveCampaignContactSettings(workspaceId, {
+    dmMessage: automationData.dmMessage ?? existing.dmMessage,
+    askEnabled,
+    askType,
+    askMessage,
+    askRetryMessage,
+    askFieldLabel,
+    askAfterLink,
+    askThanksMessage,
+    contactTags,
+  });
+  if ("error" in contactSettings) {
+    return NextResponse.json(
+      { success: false, error: contactSettings.error },
+      { status: 400 }
+    );
+  }
 
   // Keep dependent fields consistent: any-word clears keywords; a disabled
   // opening DM clears its message and button.
@@ -525,7 +569,7 @@ export async function PATCH(request: NextRequest) {
   const updated = await prisma.$transaction(async (tx) => {
     const campaign = await tx.automation.update({
       where: { id: automationId },
-      data: automationData,
+      data: { ...automationData, ...contactSettings.data },
     });
 
     await syncCampaignLinks(tx, {

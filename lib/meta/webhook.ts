@@ -83,6 +83,9 @@ interface WebhookEntry {
       is_deleted?: boolean;
       is_unsupported?: boolean;
       attachments?: Array<{ type?: string }>;
+      // Present when the message is a tapped quick reply. For the email and
+      // phone quick replies, `text` carries the email or number itself.
+      quick_reply?: { payload?: string };
     };
   }>;
 }
@@ -92,6 +95,7 @@ export interface WebhookMessageEvent {
   messageId: string;
   messageText: string;
   senderId: string;
+  quickReplyPayload?: string;
 }
 
 export interface WebhookPostbackEvent {
@@ -228,11 +232,13 @@ export function parseMessageEvents(
       // Ignore anything the connected account sent to itself.
       if (senderId === accountId) continue;
 
+      const quickReplyPayload = message.quick_reply?.payload;
       events.push({
         instagramAccountId: accountId,
         messageId,
         messageText: text,
         senderId,
+        ...(quickReplyPayload ? { quickReplyPayload } : {}),
       });
     }
   }

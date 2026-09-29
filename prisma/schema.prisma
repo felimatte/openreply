@@ -85,6 +85,10 @@ model Workspace {
   linkClicks        LinkClick[]
   webhookEvents     WebhookEvent[]
   operationalEvents OperationalEvent[]
+  contacts          Contact[]
+  tags              Tag[]
+  contactFields     ContactField[]
+  contactSync       ContactSync?
 
   @@index([ownerId])
 }
@@ -201,6 +205,23 @@ model Automation {
   publicReplyEnabled Boolean @default(false)
   publicReplyMessage String?
   publicReplyMessages String[] @default([])
+  // Ask the person for one piece of data and keep it on their contact. Off by
+  // default, so a campaign that never turns it on behaves exactly as before.
+  askEnabled       Boolean          @default(false)
+  askType          ContactDataType?
+  askMessage       String?
+  // Sent when an email or phone answer doesn't look valid. Empty repeats the
+  // question itself.
+  askRetryMessage  String?
+  // The custom field (ContactField.key) a free-text answer is saved in.
+  askFieldKey      String?
+  // false: the link is sent in exchange for the answer. true: the question
+  // comes after the link, and the follow-up waits for the answer.
+  askAfterLink     Boolean          @default(false)
+  // Sent after a valid answer when the question came after the link.
+  askThanksMessage String?
+  // Tags added to everyone this campaign fires for.
+  contactTags      String[]         @default([])
   isActive       Boolean @default(true)
   wholeWordMatch Boolean @default(true)
   reportShareSlug    String? @unique
@@ -214,6 +235,8 @@ model Automation {
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
+  sourcedContacts  Contact[]        @relation("ContactSource")
+  contactQuestions ContactQuestion[]
 
   @@index([workspaceId])
   @@index([instagramAccountId])
@@ -415,4 +438,128 @@ model ZernioConnection {
 model PostbackDelivery {
   id String @id
   createdAt DateTime @default(now())
+}
+
+/// Someone who has interacted with a connected Instagram account: they
+/// commented and a campaign fired, messaged the account, or tapped a button.
+/// One row per person per connected account, keyed by the Instagram-scoped id
+/// Instagram gives that person for that account.
+///
+/// Deliberately not tied to the InstagramAccount row. Disconnecting an account
+/// deletes that row along with its campaigns, but reconnecting the same
+/// business account brings back the same person ids, so the contacts and the
+/// data people shared survive a reconnect.
+model Contact {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  /// The connected business account's Instagram id (InstagramAccount.instagramId).
+  igAccountId        String
+  /// The person's Instagram-scoped id for that account (IGSID).
+  igsid              String
+  username           String?
+  email              String?
+  phone              String?
+  /// Custom field values, keyed by ContactField.key.
+  fields             Json      @default("{}")
+  /// The first campaign that fired for this person.
+  sourceAutomationId String?
+  lastInteractionAt  DateTime  @default(now())
+  /// Last time the person messaged the account or tapped a button. Instagram
+  /// only accepts messages to them within 24 hours of it.
+  lastInboundAt      DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  sourceAutomation Automation?      @relation("ContactSource", fields: [sourceAutomationId], references: [id], onDelete: SetNull)
+  tags             ContactTag[]
+  question         ContactQuestion?
+
+  @@unique([workspaceId, igAccountId, igsid])
+  @@index([workspaceId, lastInteractionAt])
+  @@index([sourceAutomationId])
+}
+
+model Tag {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  contacts  ContactTag[]
+
+  @@unique([workspaceId, name])
+}
+
+model ContactTag {
+  contactId String
+  tagId     String
+  createdAt DateTime @default(now())
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([contactId, tagId])
+  @@index([tagId])
+}
+
+/// A custom field a free-text answer can be saved in. `key` names the value in
+/// Contact.fields and never changes; `label` is what people see.
+model ContactField {
+  id          String   @id @default(cuid())
+  workspaceId String
+  key         String
+  label       String
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, key])
+}
+
+/// A question a campaign asked and is still waiting on. While it is open, the
+/// person's next DM is read as the answer instead of being matched against
+/// campaign keywords. One open question per contact: asking again replaces it.
+/// The question's settings are copied from the campaign when it is asked, so
+/// editing the campaign never changes what an in-flight answer is checked as.
+model ContactQuestion {
+  contactId    String          @id
+  automationId String
+  type         ContactDataType
+  fieldKey     String?
+  /// True when the campaign's link already went out before the question.
+  afterLink    Boolean         @default(false)
+  attempts     Int             @default(0)
+  expiresAt    DateTime
+  createdAt    DateTime        @default(now())
+
+  contact    Contact    @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  automation Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+
+  @@index([automationId])
+}
+
+/// Where a workspace's contact changes are sent: a Google Sheet's Apps Script,
+/// or any tool that accepts a webhook. Every request is signed with `secret`.
+model ContactSync {
+  workspaceId   String    @id
+  /// Empty until the sheet's web app URL is pasted in.
+  url           String?
+  /// Encrypted with ENCRYPTION_KEY, like the Instagram tokens.
+  secret        String
+  enabled       Boolean   @default(false)
+  lastSuccessAt DateTime?
+  lastErrorAt   DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+}
+
+enum ContactDataType {
+  EMAIL
+  PHONE
+  TEXT
 }

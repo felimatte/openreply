@@ -12,7 +12,7 @@ export default function PrivacyPage() {
     <LegalShell
       title="Privacy Policy"
       description="OpenReply helps businesses send Meta-compliant private replies when people comment on connected Instagram posts or reels."
-      updatedAt="May 24, 2026"
+      updatedAt="September 29, 2026"
     >
       <section>
         <h2 className="text-xl font-bold text-white">Data We Collect</h2>
@@ -23,6 +23,13 @@ export default function PrivacyPage() {
           comments needed to process campaigns, delivery logs, and operational
           diagnostics.
         </p>
+        <p className="mt-3">
+          For the people who interact with a connected Instagram account, we
+          keep a contact record: their Instagram-scoped ID and username, when
+          they interacted, the tags the business assigns, and any email
+          address, phone number or answer they choose to send in reply to a
+          campaign&apos;s question.
+        </p>
       </section>
 
       <section>
@@ -32,6 +39,12 @@ export default function PrivacyPage() {
           integrations, match comment keywords, send private replies through the
           official Meta APIs, prevent duplicate sends, troubleshoot failures,
           and protect the service.
+        </p>
+        <p className="mt-3">
+          Contact records let the connected business see who it talks to,
+          export that list, and, if it chooses to, keep a Google Sheet or
+          another tool it connects up to date with it. Contact details are
+          shared only with the destination the business configures.
         </p>
       </section>
 
@@ -51,7 +64,9 @@ export default function PrivacyPage() {
           The production service may use hosting, database, Redis queue, email,
           and observability providers such as Vercel, Railway, PostgreSQL,
           Redis, and Resend. These providers process data only as needed to run
-          the service.
+          the service. When a business connects a Google Sheet or another tool
+          to its contacts, contact records are sent to that destination on the
+          business&apos;s behalf.
         </p>
       </section>
 
@@ -61,6 +76,11 @@ export default function PrivacyPage() {
           Customers can disconnect Instagram from settings, which removes the
           stored Instagram connection and stops campaigns. For account or data
           deletion, follow the Data Deletion page linked from the footer.
+        </p>
+        <p className="mt-3">
+          Contact records are kept until the business deletes them or its
+          workspace is deleted. Anyone who shared details with a business can
+          ask that business to delete them.
         </p>
       </section>
 

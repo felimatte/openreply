@@ -378,6 +378,31 @@ describe("parseMessageEvents", () => {
     ]);
   });
 
+  it("should keep a tapped quick reply's payload alongside its text", () => {
+    const payload = messagingPayload([
+      {
+        sender: { id: "user_999" },
+        recipient: { id: "ig_456" },
+        // Tapping the email quick reply sends the address as the text.
+        message: {
+          mid: "mid_abc",
+          text: "ana@example.com",
+          quick_reply: { payload: "ask_email:auto_1" },
+        },
+      },
+    ]);
+
+    expect(parseMessageEvents(payload)).toEqual([
+      {
+        instagramAccountId: "ig_456",
+        messageId: "mid_abc",
+        messageText: "ana@example.com",
+        senderId: "user_999",
+        quickReplyPayload: "ask_email:auto_1",
+      },
+    ]);
+  });
+
   it("should ignore echoes of the account's own messages", () => {
     const payload = messagingPayload([
       {

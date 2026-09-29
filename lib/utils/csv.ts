@@ -76,6 +76,27 @@ function parseRows(text: string): string[][] {
   return rows;
 }
 
+// A cell starting with one of these is read as a formula by Excel and Google
+// Sheets. Contact data is typed by strangers, so such a cell is written with a
+// leading apostrophe and always opens as plain text. A plain number, such as a
+// phone number with its "+", can't run anything, so it is left untouched.
+const FORMULA_PREFIX = /^[=+\-@\t\r]/;
+const PLAIN_NUMBER = /^[+-]?[\d\s().-]+$/;
+
+function csvCell(value: string): string {
+  const safe =
+    FORMULA_PREFIX.test(value) && !PLAIN_NUMBER.test(value) ? `'${value}` : value;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/**
+ * Serialize rows as CSV: comma separated, CRLF line endings, and a byte order
+ * mark so Excel reads accents and emoji as UTF-8.
+ */
+export function toCsv(rows: readonly (readonly string[])[]): string {
+  return `﻿${rows.map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
+}
+
 /**
  * Pull the shortcode out of an Instagram post or reel URL so a pasted link
  * can be matched against a media item's permalink. Returns null if the value
