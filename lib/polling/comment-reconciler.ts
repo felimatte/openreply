@@ -267,6 +267,7 @@ async function sweepCampaign({
         commentText: c.text ?? "",
         commenterId: c.from!.id,
         commenterName: c.from?.username,
+        timestamp: Number.isFinite(Date.parse(c.timestamp)) ? Date.parse(c.timestamp) : undefined,
         mediaId,
         // When the sweep is looking at an ad, the campaign is bound to the post
         // the ad was made from: without this the worker matches nothing and

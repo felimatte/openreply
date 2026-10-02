@@ -33,6 +33,7 @@ export function verifyWebhookSignature(
 }
 
 export interface WebhookCommentEvent {
+  timestamp?: number;
   instagramAccountId: string;
   commentId: string;
   commentText: string;
@@ -56,6 +57,7 @@ interface WebhookEntry {
       id?: string;
       comment_id?: string;
       text?: string;
+      timestamp?: string | number;
       from?: {
         id?: string;
         username?: string;
@@ -72,6 +74,7 @@ interface WebhookEntry {
     };
   }>;
   messaging?: Array<{
+    timestamp?: number;
     sender?: { id?: string };
     recipient?: { id?: string };
     postback?: { mid?: string; title?: string; payload?: string };
@@ -91,6 +94,7 @@ interface WebhookEntry {
 }
 
 export interface WebhookMessageEvent {
+  timestamp?: number;
   instagramAccountId: string;
   messageId: string;
   messageText: string;
@@ -99,6 +103,7 @@ export interface WebhookMessageEvent {
 }
 
 export interface WebhookPostbackEvent {
+  timestamp?: number;
   instagramAccountId: string;
   userId: string;
   payload: string;
@@ -114,6 +119,12 @@ export interface WebhookReadEvent {
 interface WebhookPayload {
   object: string;
   entry: WebhookEntry[];
+}
+
+function eventTime(value: string | number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = typeof value === "number" ? (value < 1_000_000_000_000 ? value * 1000 : value) : Date.parse(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
 export function parseCommentEvents(payload: WebhookPayload): WebhookCommentEvent[] {
@@ -158,6 +169,7 @@ export function parseCommentEvents(payload: WebhookPayload): WebhookCommentEvent
         commenterName: value.from?.username,
         mediaId,
         originalMediaId,
+        ...((eventTime(value.timestamp) ?? eventTime(entry.time)) ? { timestamp: eventTime(value.timestamp) ?? eventTime(entry.time) } : {}),
       });
     }
   }
@@ -191,6 +203,7 @@ export function parsePostbackEvents(
         userId,
         payload: postbackPayload,
         mid: messaging.postback?.mid,
+        ...((eventTime(messaging.timestamp) ?? eventTime(entry.time)) ? { timestamp: eventTime(messaging.timestamp) ?? eventTime(entry.time) } : {}),
       });
     }
   }
@@ -239,6 +252,7 @@ export function parseMessageEvents(
         messageText: text,
         senderId,
         ...(quickReplyPayload ? { quickReplyPayload } : {}),
+        ...((eventTime(messaging.timestamp) ?? eventTime(entry.time)) ? { timestamp: eventTime(messaging.timestamp) ?? eventTime(entry.time) } : {}),
       });
     }
   }
@@ -247,9 +261,8 @@ export function parseMessageEvents(
 }
 
 /**
- * Parse Instagram DM read receipts. When a user reads an opening DM but does
- * not tap its button, the webhook route uses this to schedule the reveal after
- * a short grace period.
+ * Parse Instagram DM read receipts. A read receipt does not open the messaging
+ * window and cannot resume an automated conversation.
  */
 export function parseReadEvents(payload: WebhookPayload): WebhookReadEvent[] {
   const events: WebhookReadEvent[] = [];

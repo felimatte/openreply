@@ -3,10 +3,14 @@ import { createContactSyncWorker } from "@/lib/contacts/sync-worker";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
+import { replayPendingReelComments } from "@/lib/automation/pending-comments";
+import { createFlowWorker } from "@/lib/flows/queue";
+import { recoverFlowRuns } from "@/lib/flows/engine";
 import os from "node:os";
 
 const worker = createDMWorker();
 const contactSyncWorker = createContactSyncWorker();
+const flowWorker = createFlowWorker();
 const startedAt = new Date().toISOString();
 const HEARTBEAT_INTERVAL_MS = 30_000;
 // Polling safety net for comments that webhooks miss. Runs in the worker because
@@ -39,6 +43,7 @@ async function poll() {
     if (attached.bound > 0 || attached.failedAccounts > 0) {
       console.log("[DM Worker] Next-reel attachment:", attached);
     }
+    await replayPendingReelComments();
     await reconcileComments();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -49,12 +54,17 @@ async function poll() {
 // Kick off one sweep shortly after boot, then on a fixed interval.
 setTimeout(() => void poll(), 10_000);
 const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+// Delays and unanswered questions are durable database schedules. Recovering
+// them also repairs a queue outage or a restart between commit and enqueue.
+const flowRecoveryTimer = setInterval(() => void recoverFlowRuns().catch((error) => console.error("[Flows] Recovery failed:", error instanceof Error ? error.message : "Unknown error")), 30_000);
+void recoverFlowRuns().catch(() => {});
 
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
   clearInterval(pollTimer);
-  await Promise.all([worker.close(), contactSyncWorker.close()]);
+  clearInterval(flowRecoveryTimer);
+  await Promise.all([worker.close(), contactSyncWorker.close(), flowWorker.close()]);
   process.exit(0);
 }
 

@@ -39,6 +39,7 @@ interface Campaign {
   publicReplyMessage: string | null;
   publicReplyMessages: string[];
   isActive: boolean;
+  flowEnabled?: boolean;
   instagramAccountId: string;
   instagramAccount: { username: string };
   trackedLinks?: {
@@ -230,6 +231,14 @@ export default function CampaignDetailPage() {
           )}
         </Summary>
 
+        {campaign.flowEnabled && (
+          <Summary title="Mensajes y acciones del flujo">
+            <p className="text-sm text-muted">Esta campaña usa un recorrido visual con sus propios mensajes, condiciones y acciones.</p>
+            <Link href={`/campaigns/${campaign.id}/flow`} className="inline-block rounded-lg border border-accent/40 px-3 py-2 text-sm text-accent">Ver y editar el flujo</Link>
+          </Summary>
+        )}
+
+        {!campaign.flowEnabled && <>
         {campaign.openingDmEnabled && (
           <Summary title={t("They will get an opening DM")}>
             <FieldBox>{campaign.openingDmMessage || t("Opening message")}</FieldBox>
@@ -291,6 +300,7 @@ export default function CampaignDetailPage() {
             </p>
           </Summary>
         )}
+        </>}
       </div>
 
       {/* Right: top bar + tabs */}
@@ -305,6 +315,12 @@ export default function CampaignDetailPage() {
             </TabButton>
           </div>
           <div className="flex items-center gap-2">
+            <Link
+              href={`/campaigns/${campaign.id}/flow`}
+              className="rounded border border-accent/40 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20"
+            >
+              Armar flujo
+            </Link>
             <Link
               href={`/campaigns/${campaign.id}/edit`}
               className="rounded border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground"
@@ -338,7 +354,13 @@ export default function CampaignDetailPage() {
           </div>
         )}
 
-        {tab === "preview" && (
+        {tab === "preview" && campaign.flowEnabled && (
+          <div className="panel space-y-3 p-6">
+            <p className="text-sm text-muted">Probá los distintos caminos, respuestas y acciones desde el armador visual.</p>
+            <Link href={`/campaigns/${campaign.id}/flow`} className="inline-block rounded-lg border border-accent/40 px-4 py-2 text-sm text-accent">Abrir simulador de flujo</Link>
+          </div>
+        )}
+        {tab === "preview" && !campaign.flowEnabled && (
           <div className="flex justify-center sm:justify-start">
           <CampaignPreview
             tab={previewTab}

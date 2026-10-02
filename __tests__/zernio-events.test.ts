@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { normalizeZernioEvent, verifyZernioSignature } from '@/lib/zernio/normalize-event';
 import { parseCommentEvents, parseMessageEvents, parsePostbackEvents, parseReadEvents } from '@/lib/meta/webhook';
 
@@ -41,5 +41,27 @@ describe('Zernio event boundary', () => {
     for (const payload of [null, {}, { ...envelope, event: 'post.published' }, { ...envelope, event: 'message.received', message: {} }]) {
       expect(normalizeZernioEvent({ payload, account })).toBeNull();
     }
+  });
+  it('preserves the original envelope time across delayed message retries', () => {
+    const timestamp = '2026-09-28T10:00:00Z';
+    const payload = { ...envelope, timestamp, event: 'message.received', message: { platformMessageId: 'original-mid', direction: 'incoming', text: 'SI', sender: { id: 'person1' } } };
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse(timestamp) + 1000);
+    try {
+      const first = normalizeZernioEvent({ payload, account });
+      clock.mockReturnValue(Date.parse(timestamp) + 7 * 86400000);
+      const replay = normalizeZernioEvent({ payload, account });
+      expect(replay).toEqual(first); expect(parseMessageEvents(replay!)[0].timestamp).toBe(Date.parse(timestamp));
+      expect(clock).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+  it('uses the same original timestamp for comment and continuation events', () => {
+    const timestamp = '2026-09-28T10:00:00Z';
+    const comment = normalizeZernioEvent({ account, payload: { ...envelope, timestamp, event: 'comment.received', comment: { id: 'comment', platformPostId: 'reel', text: 'GUIA', author: { id: 'person1' } } } });
+    const button = normalizeZernioEvent({ account, payload: { ...envelope, timestamp, event: 'message.received', message: { platformMessageId: 'tap', direction: 'incoming', text: 'Seguir', sender: { id: 'person1' } }, metadata: { postbackPayload: 'flow.opaque' } } });
+    expect(parseCommentEvents(comment!)[0].timestamp).toBe(Date.parse(timestamp)); expect(parsePostbackEvents(button!)[0].timestamp).toBe(Date.parse(timestamp));
+  });
+  it('does not invent an opt-in timestamp for an undated provider event', () => {
+    const result = normalizeZernioEvent({ account, payload: { ...envelope, event: 'message.received', message: { platformMessageId: 'undated', direction: 'incoming', text: 'SI', sender: { id: 'person1' } } } });
+    expect(result!.entry[0].time).toBe(0); expect(parseMessageEvents(result!)[0]).not.toHaveProperty('timestamp');
   });
 });

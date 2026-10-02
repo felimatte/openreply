@@ -15,6 +15,7 @@
 import { useI18n } from "@/lib/i18n/provider";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
@@ -42,6 +43,8 @@ interface LoadedCampaign {
   pendingNextReel: boolean;
   matchAnyPost: boolean;
   keywords: string[];
+  excludedKeywords?: string[];
+  priority?: number;
   matchAnyWord: boolean;
   dmTriggerEnabled: boolean;
   dmMessage: string;
@@ -173,6 +176,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
 
   const [matchMode, setMatchMode] = useState<MatchMode>("specific");
   const [keywordText, setKeywordText] = useState("");
+  const [excludedKeywordText, setExcludedKeywordText] = useState("");
+  const [priority, setPriority] = useState(0);
   const [dmTriggerEnabled, setDmTriggerEnabled] = useState(false);
 
   const [publicReplyEnabled, setPublicReplyEnabled] = useState(false);
@@ -224,6 +229,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         .map((k) => k.trim())
         .filter(Boolean),
     [keywordText]
+  );
+  const excludedKeywords = useMemo(
+    () => excludedKeywordText.split(",").map((word) => word.trim()).filter(Boolean),
+    [excludedKeywordText]
   );
 
   // Fetch the connected account's real avatar for the preview (cache-first so
@@ -317,6 +326,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setPostUrl(c.postUrl);
         setMatchMode(c.matchAnyWord ? "any" : "specific");
         setKeywordText(c.keywords.join(", "));
+        setExcludedKeywordText((c.excludedKeywords ?? []).join(", "));
+        setPriority(c.priority ?? 0);
         setDmTriggerEnabled(c.dmTriggerEnabled ?? false);
         setPublicReplyEnabled(c.publicReplyEnabled);
         setPublicReplyMessages(
@@ -388,6 +399,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     setPostCaption("");
     setMatchMode("specific");
     setKeywordText((row.keywords ?? []).join(", "));
+    setExcludedKeywordText("");
+    setPriority(0);
     setDmMessage(row.dmMessage ?? "");
     setPublicReplyEnabled(Boolean(row.publicReply));
     setPublicReplyMessages(row.publicReply ? [row.publicReply] : [""]);
@@ -450,6 +463,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       return setError(t("Pick a post or reel to trigger the campaign."));
     if (matchMode === "specific" && keywords.length === 0)
       return setError(t("Add at least one keyword, or switch to any word."));
+    if (excludedKeywords.length > 20 || excludedKeywords.some((word) => word.length > 50))
+      return setError("Usá hasta 20 palabras excluidas, de hasta 50 caracteres cada una.");
+    if (!Number.isInteger(priority) || priority < -100 || priority > 100)
+      return setError("La prioridad debe ser un número entero entre -100 y 100.");
     if (!dmMessage.trim()) return setError(t("Add the DM with the link."));
     if (openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError(t("Your opening DM needs a message and a button label."));
@@ -469,6 +486,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       pendingNextReel: triggerScope === "next",
       matchAnyWord: matchMode === "any",
       keywords: matchMode === "any" ? [] : keywords,
+      excludedKeywords,
+      priority,
       dmTriggerEnabled,
       dmMessage,
       openingDmEnabled,
@@ -658,6 +677,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           )}
         </div>
         <div className="ml-auto flex items-center gap-2">
+          {mode === "edit" && campaignId && (
+            <Link href={`/campaigns/${campaignId}/flow`} className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent hover:bg-accent/20">
+              Armar flujo visual
+            </Link>
+          )}
           {importQueue && (
             <button
               type="button"
@@ -795,6 +819,15 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           >
             {t("any word")}
           </Radio>
+          <div className="space-y-2 rounded-lg border border-border p-3">
+            <label htmlFor="excluded-keywords" className="block text-sm font-medium text-foreground">Palabras excluidas</label>
+            <input id="excluded-keywords" value={excludedKeywordText} onChange={(event) => setExcludedKeywordText(event.target.value)} placeholder="ejemplo, otra palabra" aria-describedby="excluded-keywords-help" className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none" />
+            <p id="excluded-keywords-help" className="text-xs text-muted">Separalas con comas. Hasta 20 palabras de 50 caracteres. Los comentarios que coincidan con alguna quedan fuera de esta campaña.</p>
+            {!!excludedKeywords.length && <div className="flex flex-wrap gap-1">{excludedKeywords.map((word, index) => <span key={`${index}-${word}`} className={`rounded-md px-2 py-1 text-xs ${word.length > 50 || index >= 20 ? "bg-error/10 text-error" : "bg-accent/10 text-accent"}`}>{word}</span>)}</div>}
+            <label htmlFor="campaign-priority" className="block pt-1 text-sm font-medium text-foreground">Prioridad</label>
+            <input id="campaign-priority" type="number" min={-100} max={100} step={1} value={priority} onChange={(event) => setPriority(Number(event.target.value))} aria-describedby="campaign-priority-help" className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-accent/40 focus:outline-none" />
+            <p id="campaign-priority-help" className="text-xs text-muted">De -100 a 100. Con flujos visuales, se elige la campaña coincidente de mayor prioridad.</p>
+          </div>
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
               {t("also reply when someone DMs")}{" "}

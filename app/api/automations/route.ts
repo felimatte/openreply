@@ -33,6 +33,8 @@ const createAutomationSchema = z
     pendingNextReel: z.boolean().optional().default(false),
     matchAnyPost: z.boolean().optional().default(false),
     keywords: z.array(z.string().min(1).max(50)).max(10).optional().default([]),
+    excludedKeywords: z.array(z.string().min(1).max(50)).max(20).optional().default([]),
+    priority: z.number().int().min(-100).max(100).optional().default(0),
     matchAnyWord: z.boolean().optional().default(false),
     dmTriggerEnabled: z.boolean().optional().default(false),
     dmMessage: z.string().min(1).max(1000),
@@ -97,6 +99,8 @@ const updateAutomationSchema = z.object({
   pendingNextReel: z.boolean().optional(),
   matchAnyPost: z.boolean().optional(),
   keywords: z.array(z.string().min(1).max(50)).max(10).optional(),
+  excludedKeywords: z.array(z.string().min(1).max(50)).max(20).optional(),
+  priority: z.number().int().min(-100).max(100).optional(),
   matchAnyWord: z.boolean().optional(),
   dmTriggerEnabled: z.boolean().optional(),
   dmMessage: z.string().min(1).max(1000).optional(),
@@ -237,6 +241,14 @@ export async function GET(request: NextRequest) {
   for (const row of clickCounts) {
     const item = analytics.get(row.automationId);
     if (item) item.clicks = row._count._all;
+  }
+
+  if (automationsWithReports.some((automation) => automation.flowPublishedVersionId)) {
+    const flowClicks = await prisma.flowLinkClick.groupBy({ by: ["automationId"], where: { workspaceId }, _count: { _all: true } });
+    for (const row of flowClicks) {
+      const item = analytics.get(row.automationId);
+      if (item) item.clicks += row._count._all;
+    }
   }
 
   for (const automation of automationsWithReports) {
@@ -391,8 +403,11 @@ export async function POST(request: NextRequest) {
       postId: isSpecificPost ? parsed.data.postId : null,
       postUrl: isSpecificPost ? parsed.data.postUrl : null,
       pendingNextReel,
+      nextReelArmedAt: pendingNextReel && parsed.data.isActive ? new Date() : null,
       matchAnyPost,
       keywords: matchAnyWord ? [] : parsed.data.keywords,
+      excludedKeywords: parsed.data.excludedKeywords,
+      priority: parsed.data.priority,
       matchAnyWord,
       dmTriggerEnabled: parsed.data.dmTriggerEnabled,
       dmMessage: parsed.data.dmMessage,
@@ -569,7 +584,11 @@ export async function PATCH(request: NextRequest) {
   const updated = await prisma.$transaction(async (tx) => {
     const campaign = await tx.automation.update({
       where: { id: automationId },
-      data: { ...automationData, ...contactSettings.data },
+      data: { ...automationData, ...contactSettings.data,
+        ...((automationData.pendingNextReel ?? existing.pendingNextReel) && (automationData.isActive ?? existing.isActive) &&
+          ((automationData.pendingNextReel === true && !existing.pendingNextReel) || (automationData.isActive === true && !existing.isActive) || !existing.nextReelArmedAt) ? { nextReelArmedAt: new Date() } : {}),
+        ...(automationData.pendingNextReel === false ? { nextReelArmedAt: null } : {}),
+      },
     });
 
     await syncCampaignLinks(tx, {

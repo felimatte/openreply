@@ -10,6 +10,7 @@
 import { useI18n } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import ContactAutomationControls from "@/components/contact-automation-controls";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 
 interface ContactRow {
@@ -535,6 +536,7 @@ function ContactEditor({
         </div>
 
         <div className="mt-5 space-y-4">
+          <ContactAutomationControls contactId={contact.id} />
           {error && (
             <div className="rounded border border-error/20 bg-error/10 p-3 text-sm text-error">{error}</div>
           )}

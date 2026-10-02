@@ -34,6 +34,7 @@ const {
     instagramAccount: {
       findUnique: vi.fn(),
     },
+    contact: { findFirst: vi.fn() },
     operationalEvent: {
       create: vi.fn(),
     },
@@ -235,6 +236,7 @@ beforeEach(() => {
 
   mockPrisma.automation.findMany.mockResolvedValue([mockAutomation]);
   mockPrisma.automation.findFirst.mockResolvedValue(null);
+  mockPrisma.contact.findFirst.mockResolvedValue({ id: "contact_1", automationPaused: false, automationPausedUntil: null, lastInboundAt: new Date() });
   mockPrisma.dmLog.findUnique.mockResolvedValue(null);
   mockPrisma.dmLog.create.mockResolvedValue({});
   // Two different lookups share findFirst: the cross-campaign private-reply
@@ -354,7 +356,7 @@ describe("DM Worker — Full Pipeline", () => {
           orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
       },
-      orderBy: { createdAt: "asc" },
+      orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
     });
     expect(mockMatchKeywords).toHaveBeenCalledWith(
       "I want the LINK!",
@@ -710,7 +712,7 @@ describe("DM Worker — Full Pipeline", () => {
     expect(mockSendPrivateReplyWithLinkButton).not.toHaveBeenCalled();
   });
 
-  it("should deliver the next DM from a read fallback when no button tap has sent it yet", async () => {
+  it("does not continue after reading an opening DM without a reply", async () => {
     mockPrisma.automation.findMany.mockResolvedValue([]);
     mockPrisma.automation.findFirst.mockResolvedValue({
       ...mockAutomation,
@@ -727,20 +729,9 @@ describe("DM Worker — Full Pipeline", () => {
       })
     );
 
-    expect(mockPrisma.dmLog.findUnique).toHaveBeenCalledWith({
-      where: {
-        automationId_commentId: {
-          automationId: "auto_789",
-          commentId: "reveal:commenter_999",
-        },
-      },
-    });
-    expect(mockSendDirectMessage).toHaveBeenCalledWith(
-      "decrypted_token",
-      "ig_456",
-      "commenter_999",
-      "Hey commenter_user! Here is the link: https://example.com"
-    );
+    expect(mockPrisma.dmLog.findUnique).not.toHaveBeenCalled();
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
   });
 
   it("should not deliver a read fallback when the button tap already sent the reveal", async () => {
@@ -793,7 +784,7 @@ describe("DM Worker — Full Pipeline", () => {
     expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
   });
 
-  it("should deliver a follow-gated read fallback once the user follows", async () => {
+  it("does not treat following the account as a reply to an opening DM", async () => {
     mockPrisma.automation.findMany.mockResolvedValue([]);
     mockPrisma.automation.findFirst.mockResolvedValue({
       ...mockAutomation,
@@ -812,12 +803,9 @@ describe("DM Worker — Full Pipeline", () => {
       })
     );
 
-    expect(mockSendDirectMessage).toHaveBeenCalledWith(
-      "decrypted_token",
-      "ig_456",
-      "commenter_999",
-      "Hey commenter_user! Here is the link: https://example.com"
-    );
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+    expect(mockGetUserFollowStatus).not.toHaveBeenCalled();
+    expect(mockReserveWorkspaceDMSend).not.toHaveBeenCalled();
   });
 
   it("should not log a failure when a read fallback hits a closed messaging window", async () => {
@@ -845,7 +833,7 @@ describe("DM Worker — Full Pipeline", () => {
     ).resolves.toBeUndefined();
 
     expect(mockPrisma.dmLog.upsert).not.toHaveBeenCalled();
-    expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalled();
+    expect(mockReleaseWorkspaceDMReservation).not.toHaveBeenCalled();
   });
 
   it("should still log a failure for a real button tap that fails", async () => {
@@ -1156,6 +1144,29 @@ describe("DM Worker — DM keyword trigger", () => {
   });
 });
 
+describe("scheduled legacy follow-ups", () => {
+  const job = () => ({ name: "process-followup", data: { instagramAccountId: "ig_456", userId: "commenter_999", automationId: "auto_789" }, id: "followup_1", attemptsMade: 0 });
+  beforeEach(() => mockPrisma.automation.findFirst.mockResolvedValue({ ...mockAutomation, followUpEnabled: true, followUpMessage: "Gracias por escribirnos" }));
+
+  it("does not send a queued follow-up while the contact is paused", async () => {
+    mockPrisma.contact.findFirst.mockResolvedValue({ id: "contact_1", automationPaused: true, automationPausedUntil: null, lastInboundAt: new Date() });
+    await getProcessor()(job());
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not send a follow-up after the original messaging window has closed", async () => {
+    mockPrisma.contact.findFirst.mockResolvedValue({ id: "contact_1", automationPaused: false, lastInboundAt: new Date(Date.now() - 25 * 60 * 60_000) });
+    await getProcessor()(job());
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends the scheduled message after a finite pause ended and the window is open", async () => {
+    mockPrisma.contact.findFirst.mockResolvedValue({ id: "contact_1", automationPaused: true, automationPausedUntil: new Date(Date.now() - 1_000), lastInboundAt: new Date() });
+    await getProcessor()(job());
+    expect(mockSendDirectMessage).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("Zernio worker routing", () => {
   it("fails open on unknown follow status and sends once through the selected provider", async () => {
     mockPrisma.zernioConnection.findUnique.mockResolvedValue({
@@ -1237,6 +1248,17 @@ it("stops BullMQ retries after an ambiguous Zernio direct-message outcome", asyn
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+it("keeps legacy matches when a visual campaign's keyword did not match the comment", async () => {
+  mockPrisma.automation.findMany.mockResolvedValue([
+    { ...mockAutomation, id: "visual", keywords: ["NEVER"], flowEnabled: true },
+    { ...mockAutomation, id: "legacy_first" },
+    { ...mockAutomation, id: "legacy_second" },
+  ]);
+  mockMatchKeywords.mockImplementation((_text: string, keywords: string[]) => ({ matched: !keywords.includes("NEVER"), matchedKeyword: "LINK" }));
+  await getProcessor()(createMockJob());
+  expect(mockPrisma.dmLog.create.mock.calls.map(([args]) => args.data.automationId)).toEqual(["legacy_first", "legacy_second"]);
 });
 
 it('binds queued comments to the local connection that received them', async () => {

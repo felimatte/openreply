@@ -6,6 +6,7 @@ type InstagramPayload = Parameters<typeof parseCommentEvents>[0];
 
 const envelopeSchema = z.object({
   id: z.string().min(1),
+  timestamp: z.string().datetime({ offset: true }).optional(),
   event: z.string(),
   account: z.object({ id: z.string(), platform: z.literal('instagram') }),
   comment: z.object({
@@ -34,8 +35,10 @@ export function normalizeZernioEvent({ payload, account }: {
 }): InstagramPayload | null {
   const parsed = envelopeSchema.safeParse(payload);
   if (!parsed.success || parsed.data.account.id !== account.zernioAccountId) return null;
-  const { event, comment, message, metadata, conversation, statusAt } = parsed.data;
-  const entry: InstagramPayload['entry'][number] = { id: account.instagramId, time: Date.now() };
+  const { event, comment, message, metadata, conversation, statusAt, timestamp } = parsed.data;
+  // Zernio preserves this original envelope timestamp across retries. Missing
+  // timestamps stay unknown; delivery time must never extend a DM window.
+  const entry: InstagramPayload['entry'][number] = { id: account.instagramId, time: timestamp ? Date.parse(timestamp) : 0 };
   if (event === 'comment.received' && comment) {
     entry.changes = [{ field: 'comments', value: { id: comment.id, text: comment.text, from: comment.author, media: { id: comment.platformPostId } } }];
   } else if (event === 'message.received' && message?.direction === 'incoming') {

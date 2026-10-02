@@ -23,6 +23,7 @@ export function getRedisConnection(): Redis {
 export type CommentSource = "WEBHOOK" | "POLLING";
 
 export interface ProcessCommentJob {
+  timestamp?: number;
   accountConnectionId?: string;
   instagramAccountId: string;
   commentId: string;
@@ -41,6 +42,7 @@ export interface ProcessCommentJob {
 
 // Delivered when a user taps an opening DM's button — carries the reveal target.
 export interface ProcessPostbackJob {
+  timestamp?: number;
   accountConnectionId?: string;
   instagramAccountId: string;
   userId: string;
@@ -66,6 +68,7 @@ export interface ProcessFollowUpJob {
 // An inbound DM from a user. Campaigns with `dmTriggerEnabled` whose keywords
 // match the text reply to the sender.
 export interface ProcessMessageJob {
+  timestamp?: number;
   accountConnectionId?: string;
   instagramAccountId: string;
   messageId: string;

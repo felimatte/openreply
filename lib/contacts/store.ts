@@ -44,6 +44,8 @@ export interface TrackContactInput {
   username?: string | null;
   /** They messaged the account or tapped a button just now. */
   inbound?: boolean;
+  /** Original provider event time in milliseconds, preserved across retries. */
+  inboundAt?: number;
   /** The campaign that fired for them, if one did. */
   automationId?: string | null;
   /** Tags to add. Adding a tag they already have is a no-op. */
@@ -53,12 +55,16 @@ export interface TrackContactInput {
 export interface TrackedContact {
   id: string;
   username: string | null;
+  automationPaused?: boolean;
+  automationPausedUntil?: Date | null;
 }
 
 const TRACKED_SELECT = {
   id: true,
   username: true,
   sourceAutomationId: true,
+  automationPaused: true,
+  automationPausedUntil: true,
 } as const;
 
 /**
@@ -88,6 +94,8 @@ async function upsertContact(input: TrackContactInput): Promise<TrackedContact> 
   const username = input.username?.trim() || null;
   const automationId = input.automationId ?? null;
   const now = new Date();
+  const inboundAt = input.inboundAt !== undefined && Number.isFinite(input.inboundAt) && input.inboundAt > 0
+    ? new Date(Math.min(input.inboundAt, now.getTime())) : "inboundAt" in input ? null : now;
 
   let changed = false;
   let contact = await prisma.contact.findUnique({ where, select: TRACKED_SELECT });
@@ -102,7 +110,7 @@ async function upsertContact(input: TrackContactInput): Promise<TrackedContact> 
           username,
           sourceAutomationId: automationId,
           lastInteractionAt: now,
-          lastInboundAt: input.inbound ? now : null,
+          lastInboundAt: input.inbound ? inboundAt : null,
         },
         select: TRACKED_SELECT,
       });
@@ -122,7 +130,6 @@ async function upsertContact(input: TrackContactInput): Promise<TrackedContact> 
       where: { id: contact.id },
       data: {
         lastInteractionAt: now,
-        ...(input.inbound ? { lastInboundAt: now } : {}),
         ...(renamed ? { username } : {}),
         ...(sourced ? { sourceAutomationId: automationId } : {}),
       },
@@ -131,13 +138,18 @@ async function upsertContact(input: TrackContactInput): Promise<TrackedContact> 
     changed = renamed || sourced;
   }
 
+  if (input.inbound && inboundAt) await prisma.contact.updateMany({
+    where: { id: contact.id, OR: [{ lastInboundAt: null }, { lastInboundAt: { lt: inboundAt } }] },
+    data: { lastInboundAt: inboundAt },
+  });
+
   if (input.tags?.length) {
     const added = await addContactTags(workspaceId, contact.id, input.tags);
     if (added > 0) changed = true;
   }
 
   if (changed) await enqueueContactSync(workspaceId, [contact.id]);
-  return { id: contact.id, username: contact.username };
+  return { id: contact.id, username: contact.username, automationPaused: contact.automationPaused, automationPausedUntil: contact.automationPausedUntil };
 }
 
 /**

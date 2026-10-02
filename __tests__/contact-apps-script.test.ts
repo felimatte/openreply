@@ -318,7 +318,7 @@ describe("the Apps Script", () => {
 describe("docs/contacts.md", () => {
   it("shows the same script the settings page hands out", () => {
     const doc = readFileSync(path.join(__dirname, "..", "docs", "contacts.md"), "utf8");
-    const block = doc.match(/```js\n([\s\S]*?)```/);
+    const block = doc.replace(/\r\n/g, "\n").match(/```js\n([\s\S]*?)```/);
     expect(block?.[1]).toBe(buildAppsScript("PASTE_YOUR_SECRET_HERE"));
   });
 });

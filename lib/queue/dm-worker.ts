@@ -64,8 +64,16 @@ import {
   ZernioApiError,
   ZernioDeliveryUnconfirmedError,
 } from "@/lib/zernio/client";
+import { startFlowRun, handleFlowMessage, handleFlowPostback } from "@/lib/flows/engine";
+import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
+import { deferPendingReelComment } from "@/lib/automation/pending-comments";
+import { messagingWindowOpen } from "@/lib/flows/runtime-values";
 
 const BACKOFF_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 45 * 60 * 1000];
+
+function pausedContact(contact: Pick<TrackedContact, "automationPaused" | "automationPausedUntil"> | null) {
+  return Boolean(contact?.automationPaused && (!contact.automationPausedUntil || contact.automationPausedUntil > new Date()));
+}
 
 function formatError(error: unknown): string {
   if (error instanceof MetaApiError) {
@@ -563,7 +571,14 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   } = job.data;
   const requeueAttempt = job.data.requeueAttempt ?? 0;
 
-  const automations = await prisma.automation.findMany({
+  // Resolve the next-Reel binding before matching its first comment.
+  const pendingReel = await prisma.automation.findFirst({ where: {
+    ...connectionScope(job.data), pendingNextReel: true, isActive: true,
+    instagramAccount: { instagramId: instagramAccountId },
+  }, select: { pendingNextReel: true } });
+  if (pendingReel?.pendingNextReel) await attachPendingNextReels({ accountConnectionId: job.data.accountConnectionId });
+
+  const candidates = await prisma.automation.findMany({
     where: {
       ...connectionScope(job.data),
       // Match campaigns bound to this specific post, plus any-post campaigns.
@@ -592,8 +607,16 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         orderBy: TRACKED_LINK_ORDER,
       },
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ priority: "desc" }, { createdAt: "asc" }],
   });
+
+  const matching = candidates.filter((automation) =>
+    (automation.matchAnyWord || matchKeywords(commentText, automation.keywords, automation.wholeWordMatch).matched) &&
+    !(automation.excludedKeywords?.length && matchKeywords(commentText, automation.excludedKeywords, automation.wholeWordMatch).matched));
+  if (!matching.length && pendingReel?.pendingNextReel) await deferPendingReelComment(job.data);
+  // Published flows arbitrate one winner before any public or private reply.
+  // Existing accounts that only use legacy campaigns retain their behavior.
+  const automations = matching.some((automation) => automation.flowEnabled) ? matching.slice(0, 1) : matching;
 
   for (const automation of automations) {
     // "Any word" campaigns fire on every comment; otherwise require a keyword hit.
@@ -642,6 +665,13 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       automationId: automation.id,
       tags: automation.contactTags,
     });
+    if (pausedContact(contact)) continue;
+
+    if (automation.flowEnabled) {
+      if (contact) await startFlowRun({ automationId: automation.id, instagramAccountId: automation.instagramAccountId,
+        contactId: contact.id, commentId, commentText, commenterId, commenterName, mediaId, timestamp: job.data.timestamp });
+      return;
+    }
 
     if (!hasInstagramCredentials(automation.instagramAccount)) {
       await prisma.dmLog.upsert({
@@ -1196,6 +1226,9 @@ async function sendPostbackOnce({
  */
 async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
   const { instagramAccountId, userId, payload, fallback, answered } = job.data;
+  // Old queued read fallbacks are also rejected after upgrading the worker.
+  if (fallback) return;
+  if (await handleFlowPostback({ instagramAccountId, userId, payload, eventId: job.data.mid, timestamp: job.data.timestamp })) return;
 
   const isFollowCheck = payload.startsWith("followcheck:");
   if (!isFollowCheck && !payload.startsWith("reveal:")) return;
@@ -1261,9 +1294,11 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
     igsid: userId,
     username: commenterName,
     inbound: !fallback && !answered,
+    inboundAt: job.data.timestamp,
     automationId: automation.id,
     tags: automation.contactTags,
   });
+  if (pausedContact(contact)) return;
 
   let accessToken: InstagramContext;
   try {
@@ -1468,6 +1503,12 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
     return;
   }
 
+  const contact = await prisma.contact.findFirst({
+    where: { workspaceId: automation.workspaceId, igAccountId: instagramAccountId, igsid: userId },
+    select: { id: true, automationPaused: true, automationPausedUntil: true, lastInboundAt: true },
+  });
+  if (!contact || pausedContact(contact) || !messagingWindowOpen(contact.lastInboundAt)) return;
+
   let accessToken: InstagramContext;
   try {
     accessToken = await createInstagramContext(
@@ -1515,6 +1556,7 @@ async function trackMessageSender(
     igAccountId: data.instagramAccountId,
     igsid: data.senderId,
     inbound: true,
+    inboundAt: data.timestamp,
   });
 }
 
@@ -1702,11 +1744,17 @@ async function continueAfterQuestion(
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const { instagramAccountId, messageId, messageText, senderId } = job.data;
 
+  const flowCampaign = await prisma.automation.findFirst({ where: { ...connectionScope(job.data), flowEnabled: true,
+    instagramAccount: { instagramId: instagramAccountId } }, select: { flowEnabled: true } });
+  if (flowCampaign?.flowEnabled && await handleFlowMessage({ instagramAccountId, userId: senderId, messageId,
+    text: messageText, quickReplyPayload: job.data.quickReplyPayload, timestamp: job.data.timestamp })) return;
+
   // Whoever messages the account is a contact, and their DM opens Instagram's
   // 24-hour window. If a campaign is waiting on an answer from them, this DM
   // is that answer: it is handled here and never reaches keyword matching, so
   // an answer can't set off a campaign.
   const contact = await trackMessageSender(job.data);
+  if (pausedContact(contact)) return;
   if (contact && (await answerOpenQuestion(job, contact))) return;
 
   const automations = await prisma.automation.findMany({
@@ -1730,6 +1778,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const dedupeId = `dm:${messageId}`;
 
   for (const automation of automations) {
+    if (automation.flowEnabled) continue;
     const matchResult = automation.matchAnyWord
       ? { matched: true, matchedKeyword: null }
       : matchKeywords(

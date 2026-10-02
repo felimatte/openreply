@@ -119,10 +119,14 @@ export async function GET(request: NextRequest) {
       where: { workspaceId, createdAt: { gte: monthStart }, ...accountFilter },
       _count: { _all: true },
     }),
-    prisma.linkClick.count({
-      where: { workspaceId, createdAt: { gte: monthStart }, ...accountFilter },
-    }),
-    prisma.linkClick.count({ where: { workspaceId, ...accountFilter } }),
+    Promise.all([
+      prisma.linkClick.count({ where: { workspaceId, createdAt: { gte: monthStart }, ...accountFilter } }),
+      prisma.flowLinkClick.count({ where: { workspaceId, createdAt: { gte: monthStart }, ...accountFilter } }),
+    ]).then(([legacy, flow]) => legacy + flow),
+    Promise.all([
+      prisma.linkClick.count({ where: { workspaceId, ...accountFilter } }),
+      prisma.flowLinkClick.count({ where: { workspaceId, ...accountFilter } }),
+    ]).then(([legacy, flow]) => legacy + flow),
     prisma.dmLog.groupBy({
       by: ["matchedKeyword"],
       where: { workspaceId, matchedKeyword: { not: null }, ...accountFilter },

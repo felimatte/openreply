@@ -9,6 +9,7 @@ import {
   verifyWebhookSignature,
   parseCommentEvents,
   parseMessageEvents,
+  parsePostbackEvents,
   parseReadEvents,
 } from "../lib/meta/webhook";
 import { createHmac } from "crypto";
@@ -59,6 +60,34 @@ describe("verifyWebhookSignature", () => {
   });
 });
 
+describe("original webhook event timestamps", () => {
+  it("uses the comment timestamp before the envelope delivery timestamp", () => {
+    const payload = { object: "instagram", entry: [{ id: "ig", time: 1790868000,
+      changes: [{ field: "comments", value: { id: "comment", timestamp: "2026-09-28T10:00:00Z", text: "GUIA", from: { id: "person" }, media: { id: "reel" } } }] }] };
+    expect(parseCommentEvents(payload)[0].timestamp).toBe(Date.parse("2026-09-28T10:00:00Z"));
+  });
+
+  it("keeps message and button event times when the same payload is replayed days later", () => {
+    const original = Date.parse("2026-09-28T10:00:00Z");
+    const payload = { object: "instagram", entry: [{ id: "ig", time: 1790868000, messaging: [
+      { timestamp: original, sender: { id: "person" }, message: { mid: "mid", text: "SI" } },
+      { timestamp: original, sender: { id: "person" }, postback: { mid: "tap", payload: "flow.opaque" } },
+    ] }] };
+    const clock = vi.spyOn(Date, "now").mockReturnValue(original + 1000);
+    try {
+      const first = [parseMessageEvents(payload)[0].timestamp, parsePostbackEvents(payload)[0].timestamp];
+      clock.mockReturnValue(original + 7 * 86400000);
+      expect([parseMessageEvents(payload)[0].timestamp, parsePostbackEvents(payload)[0].timestamp]).toEqual(first);
+      expect(first).toEqual([original, original]); expect(clock).not.toHaveBeenCalled();
+    } finally { clock.mockRestore(); }
+  });
+
+  it("keeps an absent source date unknown instead of using processing time", () => {
+    const payload = { object: "instagram", entry: [{ id: "ig", time: 0, messaging: [{ sender: { id: "person" }, message: { mid: "mid", text: "SI" } }] }] };
+    expect(parseMessageEvents(payload)[0]).not.toHaveProperty("timestamp");
+  });
+});
+
 describe("parseCommentEvents", () => {
   it("should parse a valid comment event", () => {
     const payload = {
@@ -96,6 +125,7 @@ describe("parseCommentEvents", () => {
       commenterId: "user_789",
       commenterName: "testuser",
       mediaId: "media_101",
+      timestamp: 1234567890000,
     });
   });
 
@@ -374,6 +404,7 @@ describe("parseMessageEvents", () => {
         messageId: "mid_abc",
         messageText: "send me the LINK please",
         senderId: "user_999",
+        timestamp: 1234567890000,
       },
     ]);
   });
@@ -399,6 +430,7 @@ describe("parseMessageEvents", () => {
         messageText: "ana@example.com",
         senderId: "user_999",
         quickReplyPayload: "ask_email:auto_1",
+        timestamp: 1234567890000,
       },
     ]);
   });

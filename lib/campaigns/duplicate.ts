@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db/client";
+import { Prisma } from "@/app/generated/prisma/client";
 import { generateReportShareSlug } from "@/lib/reports/share";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
 import { generateTrackedLinkSlug } from "@/lib/tracking/server";
@@ -64,6 +65,11 @@ export async function duplicateCampaign({
       updatedAt: undefined,
       name: buildDuplicateName(settings.name),
       isActive: false,
+      flowEnabled: false,
+      flowPublishedVersionId: null,
+      flowDraft: settings.flowDraft ?? Prisma.DbNull,
+      flowDraftRevision: 0,
+      nextReelArmedAt: null,
       reportShareSlug: generateReportShareSlug(),
       trackedLinks: {
         // Numbered from the order just read, so the copy's buttons match

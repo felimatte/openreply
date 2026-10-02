@@ -2,7 +2,7 @@ import { prisma } from "@/lib/db/client";
 import {
   createInstagramContext,
   hasInstagramCredentials,
-  getUserMedia,
+  getAllUserMedia,
   type InstagramMedia,
 } from "@/lib/instagram/provider";
 
@@ -18,12 +18,12 @@ export type AttachNextReelResult = {
 
 /**
  * Bind each pending "next reel" campaign to the earliest reel published after
- * it was created. Kept outside the HTTP route so the long-running worker can
+ * its next-Reel wait was armed. Kept outside the HTTP route so the worker can
  * run the same check on every comment-poll interval.
  */
-export async function attachPendingNextReels(): Promise<AttachNextReelResult> {
+export async function attachPendingNextReels(options?: { accountConnectionId?: string }): Promise<AttachNextReelResult> {
   const pending = await prisma.automation.findMany({
-    where: { pendingNextReel: true },
+    where: { pendingNextReel: true, isActive: true, ...(options?.accountConnectionId ? { instagramAccountId: options.accountConnectionId } : {}) },
     include: { instagramAccount: true },
   });
 
@@ -57,7 +57,7 @@ export async function attachPendingNextReels(): Promise<AttachNextReelResult> {
     let reels: InstagramMedia[];
     try {
       const context = await createInstagramContext(account);
-      const media = await getUserMedia({ context, limit: 25 });
+      const media = await getAllUserMedia({ context, max: 200 });
       reels = media
         .filter(isReel)
         .sort(
@@ -70,21 +70,22 @@ export async function attachPendingNextReels(): Promise<AttachNextReelResult> {
     }
 
     for (const automation of automations) {
-      // The "next" reel = the earliest one posted after the campaign was created.
+      // Existing waiting campaigns use their original creation date until rearmed.
+      const armedAt = automation.nextReelArmedAt ?? automation.createdAt;
       const nextReel = reels.find(
-        (reel) => new Date(reel.timestamp) > automation.createdAt
+        (reel) => new Date(reel.timestamp) > armedAt
       );
       if (!nextReel) continue;
 
-      await prisma.automation.update({
-        where: { id: automation.id },
+      const result = await prisma.automation.updateMany({
+        where: { id: automation.id, pendingNextReel: true, isActive: true, nextReelArmedAt: automation.nextReelArmedAt },
         data: {
           postId: nextReel.id,
           postUrl: nextReel.permalink ?? null,
           pendingNextReel: false,
         },
       });
-      bound += 1;
+      bound += result.count;
     }
   }
 

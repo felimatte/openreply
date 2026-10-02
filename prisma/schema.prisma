@@ -89,6 +89,9 @@ model Workspace {
   tags              Tag[]
   contactFields     ContactField[]
   contactSync       ContactSync?
+  flowVersions      FlowVersion[]
+  flowRuns          FlowRun[]
+  flowAssets        FlowAsset[]
 
   @@index([ownerId])
 }
@@ -148,6 +151,7 @@ model InstagramAccount {
   dmLogs      DmLog[]
   linkClicks  LinkClick[]
   followerSnapshots FollowerSnapshot[]
+  flowRuns          FlowRun[]
 
   @@index([workspaceId])
 }
@@ -182,8 +186,11 @@ model Automation {
   postId         String?
   postUrl        String?
   pendingNextReel Boolean @default(false)
+  nextReelArmedAt DateTime?
   matchAnyPost   Boolean @default(false)
   keywords       String[]
+  excludedKeywords String[] @default([])
+  priority       Int @default(0)
   matchAnyWord   Boolean @default(false)
   // Also fire this campaign when someone sends a DM whose text matches the
   // keywords above. Independent of the post trigger — a DM has no media, so
@@ -223,6 +230,10 @@ model Automation {
   // Tags added to everyone this campaign fires for.
   contactTags      String[]         @default([])
   isActive       Boolean @default(true)
+  flowDraft      Json?
+  flowDraftRevision Int @default(0)
+  flowEnabled    Boolean @default(false)
+  flowPublishedVersionId String?
   wholeWordMatch Boolean @default(true)
   reportShareSlug    String? @unique
   reportShareEnabled Boolean @default(true)
@@ -237,6 +248,8 @@ model Automation {
   linkClicks       LinkClick[]
   sourcedContacts  Contact[]        @relation("ContactSource")
   contactQuestions ContactQuestion[]
+  flowVersions     FlowVersion[]
+  flowRuns         FlowRun[]
 
   @@index([workspaceId])
   @@index([instagramAccountId])
@@ -467,6 +480,10 @@ model Contact {
   /// Last time the person messaged the account or tapped a button. Instagram
   /// only accepts messages to them within 24 hours of it.
   lastInboundAt      DateTime?
+  automationPaused  Boolean @default(false)
+  automationPausedUntil DateTime?
+  assignedUserId    String?
+  notes             Json @default("[]")
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
 
@@ -474,6 +491,7 @@ model Contact {
   sourceAutomation Automation?      @relation("ContactSource", fields: [sourceAutomationId], references: [id], onDelete: SetNull)
   tags             ContactTag[]
   question         ContactQuestion?
+  flowRuns         FlowRun[]
 
   @@unique([workspaceId, igAccountId, igsid])
   @@index([workspaceId, lastInteractionAt])
@@ -562,4 +580,146 @@ enum ContactDataType {
   EMAIL
   PHONE
   TEXT
+}
+
+/// Published graphs are immutable; running conversations keep this snapshot.
+model FlowVersion {
+  id           String @id @default(cuid())
+  workspaceId  String
+  automationId String
+  version      Int
+  definition   Json
+  publishedAt  DateTime @default(now())
+  createdAt    DateTime @default(now())
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  runs         FlowRun[]
+  @@unique([automationId, version])
+  @@index([workspaceId])
+}
+
+model FlowRun {
+  id                 String @id @default(cuid())
+  workspaceId        String
+  automationId       String
+  versionId          String
+  contactId          String
+  instagramAccountId String
+  commentId          String?
+  currentNodeId      String?
+  status             String @default("RUNNING")
+  waitType           String?
+  waitExpiresAt      DateTime?
+  resumeAt           DateTime?
+  context            Json @default("{}")
+  attempts           Int @default(0)
+  error              String?
+  leaseToken         String?
+  leaseUntil         DateTime?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  workspace          Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automation         Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  version            FlowVersion @relation(fields: [versionId], references: [id], onDelete: Restrict)
+  contact            Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  instagramAccount   InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  steps              FlowStepRun[]
+  links              FlowLink[]
+  @@unique([automationId, commentId])
+  @@index([workspaceId, createdAt])
+  @@index([contactId, status])
+  @@index([status, resumeAt])
+  @@index([status, waitExpiresAt])
+}
+
+/// Records every attempted effect before dispatch so uncertain sends are visible.
+model FlowStepRun {
+  id          String @id @default(cuid())
+  runId       String
+  nodeId      String
+  visit       Int @default(0)
+  status      String @default("PENDING")
+  output      Json?
+  error       String?
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  run         FlowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  @@unique([runId, nodeId, visit])
+  @@index([runId, startedAt])
+}
+
+model FlowEventReceipt {
+  id        String @id
+  createdAt DateTime @default(now())
+}
+
+model FlowLink {
+  id             String @id @default(cuid())
+  token          String @unique
+  runId          String
+  nodeId         String
+  buttonId       String
+  destinationUrl String
+  clicks         Int @default(0)
+  clickedAt      DateTime?
+  createdAt      DateTime @default(now())
+  run            FlowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  clickEvents    FlowLinkClick[]
+  @@unique([runId, nodeId, buttonId])
+  @@index([runId, clickedAt])
+}
+
+model FlowLinkClick {
+  id                 String   @id @default(cuid())
+  linkId             String
+  workspaceId        String
+  automationId       String
+  instagramAccountId String
+  createdAt          DateTime @default(now())
+  link               FlowLink @relation(fields: [linkId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+  @@index([automationId, createdAt])
+  @@index([instagramAccountId, createdAt])
+  @@index([linkId])
+}
+
+model FlowAsset {
+  id          String @id @default(cuid())
+  workspaceId String
+  name        String
+  mimeType    String
+  kind        String
+  byteSize    Int
+  chunkCount  Int
+  publicToken String @unique
+  status      String @default("UPLOADING")
+  createdAt   DateTime @default(now())
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  chunks      FlowAssetChunk[]
+  @@index([workspaceId, createdAt])
+}
+
+model FlowAssetChunk {
+  id      String @id @default(cuid())
+  assetId String
+  index   Int
+  data    Bytes
+  asset   FlowAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  @@unique([assetId, index])
+}
+
+/// Comments received before a pending next Reel is bound survive queue retention.
+model PendingReelComment {
+  id          String @id @default(cuid())
+  accountId   String
+  commentId   String
+  mediaId     String
+  payload     Json
+  expiresAt   DateTime
+  replayedAt  DateTime?
+  createdAt   DateTime @default(now())
+  @@unique([accountId, commentId])
+  @@index([accountId, mediaId])
+  @@index([expiresAt])
 }

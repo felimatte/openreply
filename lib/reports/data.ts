@@ -41,6 +41,7 @@ export async function getCampaignReportBySlug(shareSlug: string, locale: Locale 
       postUrl: true,
       keywords: true,
       isActive: true,
+      flowPublishedVersionId: true,
       createdAt: true,
       updatedAt: true,
       reportShareSlug: true,
@@ -80,12 +81,10 @@ export async function getCampaignReportBySlug(shareSlug: string, locale: Locale 
         },
         _count: { _all: true },
       }),
-      prisma.linkClick.count({
-        where: {
-          workspaceId: automation.workspaceId,
-          automationId: automation.id,
-        },
-      }),
+      Promise.all([
+        prisma.linkClick.count({ where: { workspaceId: automation.workspaceId, automationId: automation.id } }),
+        automation.flowPublishedVersionId ? prisma.flowLinkClick.count({ where: { workspaceId: automation.workspaceId, automationId: automation.id } }) : Promise.resolve(0),
+      ]).then(([legacy, flow]) => legacy + flow),
       prisma.dmLog.groupBy({
         by: ["matchedKeyword"],
         where: {
@@ -131,13 +130,10 @@ export async function getCampaignReportBySlug(shareSlug: string, locale: Locale 
             createdAt: { gte: start, lt: end },
           },
         }),
-        prisma.linkClick.count({
-          where: {
-            workspaceId: automation.workspaceId,
-            automationId: automation.id,
-            createdAt: { gte: start, lt: end },
-          },
-        }),
+        Promise.all([
+          prisma.linkClick.count({ where: { workspaceId: automation.workspaceId, automationId: automation.id, createdAt: { gte: start, lt: end } } }),
+          automation.flowPublishedVersionId ? prisma.flowLinkClick.count({ where: { workspaceId: automation.workspaceId, automationId: automation.id, createdAt: { gte: start, lt: end } } }) : Promise.resolve(0),
+        ]).then(([legacy, flow]) => legacy + flow),
       ]);
 
       return {
