@@ -16,18 +16,16 @@ export function proxy(request: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
-  const isLogin = pathname === "/login";
   const isAuthenticated = hasSessionCookie(request);
 
   if (isProtected && !isAuthenticated) {
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("callbackUrl", pathname);
+    loginUrl.searchParams.set("callbackUrl", pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isLogin && isAuthenticated) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
-  }
+  // The login page validates the actual session. A stale cookie must not
+  // cause a redirect loop or prevent an existing user from linking Google.
 
   return NextResponse.next();
 }

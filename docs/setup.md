@@ -11,7 +11,7 @@ If you use a coding assistant, start with [Set it up with an AI assistant](#set-
 | **[Zernio](zernio.md), recommended for simpler connection setup** | A Zernio API key in Settings, a profile, and an Instagram account. OpenReply registers the webhook. No own Meta app or Meta secrets required. | Optional paid provider, plus your hosting. Zernio sponsors OpenReply. |
 | **[Your own Meta app](#the-meta-app)** | Your Meta app, Instagram Login, app secrets, webhook, and App Review where required. | Your hosting and any other services you use. No Zernio subscription. |
 
-Both use the official Instagram API and remain subject to Instagram’s policies, account requirements, permissions, rate limits, and messaging windows. Both need PostgreSQL, Redis, email delivery, and a running worker. Existing connections are not migrated automatically.
+Both use the official Instagram API and remain subject to Instagram’s policies, account requirements, permissions, rate limits, and messaging windows. Both need PostgreSQL, Redis, a configured sign-in provider, and a running worker. Existing connections are not migrated automatically.
 
 Learn about the optional sponsor at [Zernio](https://zernio.com/?utm_source=openreply&utm_medium=sponsorship&utm_campaign=openreply-integration&utm_content=setup-provider). Check the [provider guide and feature limits](zernio.md) before choosing.
 
@@ -30,7 +30,7 @@ The web app and the worker must share the same `DATABASE_URL`, the same `REDIS_U
 
 - **Direct Meta only:** a Facebook account for Meta developer registration. Zernio users skip the own-app setup.
 - An Instagram Business or Creator account. A personal account cannot be connected. Switch it in the Instagram app under Settings, Account type, if needed.
-- A [Resend](https://resend.com) account for login emails, with a verified sender domain. Login is email magic links only, so without this nobody can sign in. If you already run your own mail server, you can point `EMAIL_SERVER` at it instead and skip Resend entirely — see the [environment variables](#environment-variables) table.
+- At least one sign-in method: [Google sign-in](google-sign-in.md), or a [Resend](https://resend.com) account with a verified sender domain, or your own SMTP server via `EMAIL_SERVER`. Keep email delivery available when linking existing email accounts to Google.
 - Somewhere to host. The recommended setup, used throughout this guide, is Vercel for the web app and Railway for the worker plus Postgres and Redis. Check hosting costs for your usage; the always-on worker needs a suitable service plan.
 
 ## Hosting and your domain
@@ -103,9 +103,10 @@ Copy `.env.example` to `.env` for local work, or set these in Vercel and Railway
 | `ENCRYPTION_KEY` | 32-byte hex. `openssl rand -hex 32`. Encrypts provider credentials and Instagram tokens. Identical across web and worker. |
 | `DATABASE_URL` | PostgreSQL connection string. Public Railway URL on Vercel; internal on the worker. |
 | `REDIS_URL` | Redis connection string. Must support blocking commands, so an HTTP-only Redis will not work with BullMQ. |
-| `RESEND_API_KEY` | Resend key. Login is email magic links only, so without this nobody can sign in. |
-| `EMAIL_FROM` | A sender on a domain you verified in Resend. The placeholder will not deliver. |
-| `ALLOWED_EMAILS` | Optional. Comma-separated allowlist of addresses that may sign in, case insensitive. Unset, anyone who reaches your public URL can request a magic link and gets their own workspace, which is worth closing on an instance you run for yourself. |
+| `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` | Optional Google OAuth client credentials. Both enable the Google login button. See [setup and migration](google-sign-in.md). |
+| `RESEND_API_KEY` | Optional Resend key for email sign-in. Not needed with SMTP or for a new Google-only installation. Keep email configured while existing accounts link Google. |
+| `EMAIL_FROM` | Verified sender supported by your configured email provider. The placeholder will not deliver. |
+| `ALLOWED_EMAILS` | Optional. Comma-separated allowlist of addresses that may sign in, case insensitive; applies to Google and email. Unset, anyone who reaches your public URL can sign in and gets their own workspace. |
 | `EMAIL_SERVER` | Optional. An SMTP URL, for example `smtps://login%40example.com:password@mail.example.com:465`. Set it to send magic links through your own mail server instead of Resend; then `RESEND_API_KEY` is not needed. URL-encode special characters in the user and password (`@` becomes `%40`). Port 465 with `smtps://` is implicit TLS, port 587 with `smtp://` is STARTTLS. |
 
 **Direct Meta only.** Leave these unset if all accounts use Zernio:
