@@ -3,8 +3,9 @@
 /**
  * Campaign Builder
  *
- * Two-pane campaign editor: a control panel on the left and a live phone
- * preview on the right. Used for both creating and editing a campaign.
+ * New campaigns show their editable conversation immediately. Entry settings
+ * live in a collapsible panel; campaign and conversation are saved together.
+ * Existing simple campaigns and CSV imports retain the controls and preview.
  *
  * Covers the trigger scope (specific / any / next post), match mode (specific
  * words / any word), the opening, follow-gate and reveal DMs, public reply,
@@ -19,6 +20,9 @@ import Link from "next/link";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
+import FlowBuilder from "@/components/flow-builder";
+import { createDefaultFlow, parseFlowDefinition, validateFlowDefinition, type FlowDefinition } from "@/lib/flows/definition";
+import "@/components/flows/campaign-creation.css";
 import { readCache, writeCache } from "@/lib/client-cache";
 import {
   IMPORT_QUEUE_KEY,
@@ -155,6 +159,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [notFound, setNotFound] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [flow, setFlow] = useState<FlowDefinition>(() => createDefaultFlow());
+  const [flowEpoch, setFlowEpoch] = useState(0);
+  const [entryOpen, setEntryOpen] = useState(false);
+  const [visualCreation, setVisualCreation] = useState(true);
+  const creatingFlow = mode === "new" && visualCreation;
 
   const [name, setName] = useState("");
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
@@ -391,6 +400,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   // Prefill the editable fields from one queued import row. The reel is left
   // unset so the user picks it per row.
   function prefillFromRow(row: ImportRow) {
+    setVisualCreation(false);
+    setFlow(createDefaultFlow({ dmMessage: row.dmMessage, openingDmEnabled: !!row.openingDmMessage, openingDmMessage: row.openingDmMessage, trackedLinks: row.trackedUrl ? [{ destinationUrl: row.trackedUrl, label: "Abrir enlace" }] : [] }));
+    setFlowEpoch((value) => value + 1);
     setName(row.name ?? "");
     setTriggerScope("specific");
     setPostId(null);
@@ -456,7 +468,16 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   }
 
   async function handleSubmit(activeValue: boolean) {
+    if (saving) return;
     setError(null);
+
+    if (creatingFlow) {
+      // Missing entry settings should be visible immediately, without saving a
+      // placeholder campaign just to reach the conversation editor.
+      if (!selectedAccountId || (triggerScope === "specific" && !postId) || (matchMode === "specific" && !keywords.length)) setEntryOpen(true);
+      try { parseFlowDefinition(flow); } catch { return setError("Completá los textos, datos y direcciones de los pasos antes de guardar."); }
+      if (activeValue && !validateFlowDefinition(flow).valid) return setError("Revisá los puntos marcados en el flujo antes de activar la campaña. También podés guardarla como borrador.");
+    }
 
     if (!selectedAccountId) return setError(t("Connect an Instagram account first."));
     if (triggerScope === "specific" && !postId)
@@ -467,12 +488,12 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       return setError("Usá hasta 20 palabras excluidas, de hasta 50 caracteres cada una.");
     if (!Number.isInteger(priority) || priority < -100 || priority > 100)
       return setError("La prioridad debe ser un número entero entre -100 y 100.");
-    if (!dmMessage.trim()) return setError(t("Add the DM with the link."));
-    if (openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
+    if (!creatingFlow && !dmMessage.trim()) return setError(t("Add the DM with the link."));
+    if (!creatingFlow && openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError(t("Your opening DM needs a message and a button label."));
-    if (askEnabled && !askMessage.trim())
+    if (!creatingFlow && askEnabled && !askMessage.trim())
       return setError(t("Write the question you want to ask."));
-    if (askEnabled && askType === "TEXT" && !askFieldLabel.trim())
+    if (!creatingFlow && askEnabled && askType === "TEXT" && !askFieldLabel.trim())
       return setError(t("Name the field the answer is saved in."));
 
     setSaving(true);
@@ -521,6 +542,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         .map((tag) => tag.trim())
         .filter(Boolean),
       isActive: activeValue,
+      ...(creatingFlow ? { flowDefinition: flow, dmTriggerEnabled: false, dmMessage: flow.nodes.filter((node) => node.type === "message").flatMap((node) => node.data.blocks).find((block) => block.type === "text")?.text || "Continuemos la conversación.", openingDmEnabled: false, askEnabled: false } : {}),
     };
 
     try {
@@ -573,7 +595,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         }
         // refresh() busts the router cache so the list reflects the save
         // instead of landing on a stale (empty) campaigns page.
-        router.push("/campaigns");
+        router.push(creatingFlow && !importQueue ? `/campaigns/${data.data.id}/flow` : "/campaigns");
         router.refresh();
       } else {
         // Surface the specific field that failed validation instead of a
@@ -673,10 +695,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               </span>
             </>
           ) : (
-            <span className="text-sm text-muted">{t("New campaign")}</span>
+            <div><h1 className="text-xl font-semibold tracking-tight">Nueva campaña</h1><p className="mt-1 text-sm text-muted">Elegí cómo empieza y diseñá la conversación acá mismo.</p></div>
           )}
         </div>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          {mode === "new" && <button type="button" onClick={() => setVisualCreation(!visualCreation)} disabled={saving} className="rounded-lg px-3 py-2 text-xs text-muted hover:text-foreground" title="Usá la respuesta simple para campañas por DM">{visualCreation ? "Respuesta simple" : "Volver al flujo"}</button>}
           {mode === "edit" && campaignId && (
             <Link href={`/campaigns/${campaignId}/flow`} className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent hover:bg-accent/20">
               Armar flujo visual
@@ -712,28 +735,28 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 {t("Go Live")}
               </button>
             ))}
+          {mode === "new" && <button type="button" onClick={() => handleSubmit(false)} disabled={saving} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted hover:text-foreground disabled:opacity-50">Guardar borrador</button>}
           <button
             type="button"
             onClick={() => handleSubmit(mode === "new" ? true : isActive)}
             disabled={saving}
             className="rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
           >
-            {saving ? t("Saving…") : mode === "new" ? t("Go Live") : t("Save changes")}
+            {saving ? t("Saving…") : creatingFlow ? "Crear y activar" : mode === "new" ? t("Go Live") : t("Save changes")}
           </button>
         </div>
       </div>
 
+      {error && <div role="alert" className="rounded-lg border border-error/20 bg-error/10 p-3 text-sm text-error">{error}</div>}
+
       {/* min-w-0 on the cells: a grid item defaults to min-width:auto, so a
           long string widens the whole page instead of wrapping. */}
-      <div className="grid gap-6 lg:grid-cols-[300px_1fr] lg:gap-8">
-      {/* Left: controls */}
-      <div className="space-y-8 min-w-0">
-        {error && (
-          <div className="rounded border border-error/20 bg-error/10 p-3 text-sm text-error">
-            {error}
-          </div>
-        )}
-
+      <div className={creatingFlow ? "campaign-create-layout" : "grid gap-6 lg:grid-cols-[300px_1fr] lg:gap-8"}>
+      {/* Entry settings stay alongside the unsaved conversation. */}
+      <details className={creatingFlow ? "campaign-create-entry" : undefined} open={!creatingFlow || entryOpen} inert={saving} onToggle={(event) => { if (creatingFlow) setEntryOpen(event.currentTarget.open); }}>
+        {!creatingFlow && <summary className="hidden">Configuración de campaña</summary>}
+        {creatingFlow && <summary><span className="campaign-entry-number">1</span><span className="min-w-0 flex-1"><strong>Cuándo empieza</strong><span className="campaign-entry-summary">@{username} · {triggerScope === "next" ? "Próximo Reel" : triggerScope === "any" ? "Cualquier publicación" : postId ? "Reel seleccionado" : "Elegí un Reel"} · {matchMode === "any" ? "Cualquier comentario" : keywords.length ? keywords.join(", ") : "Elegí las palabras"}</span></span><span className="campaign-entry-edit">{entryOpen ? "Cerrar" : "Configurar"} <span aria-hidden="true">⌄</span></span></summary>}
+      <div className={creatingFlow ? "campaign-entry-controls" : "space-y-8 min-w-0"}>
         <div className="space-y-3">
           <label className="text-sm font-semibold text-foreground">
             {t("Campaign name")}{" "}
@@ -828,6 +851,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             <input id="campaign-priority" type="number" min={-100} max={100} step={1} value={priority} onChange={(event) => setPriority(Number(event.target.value))} aria-describedby="campaign-priority-help" className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-accent/40 focus:outline-none" />
             <p id="campaign-priority-help" className="text-xs text-muted">De -100 a 100. Con flujos visuales, se elige la campaña coincidente de mayor prioridad.</p>
           </div>
+          {!creatingFlow && <>
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
               {t("also reply when someone DMs")}{" "}
@@ -845,6 +869,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 : t("A DM containing any of these words gets the same reply, no comment needed.")}
             </p>
           )}
+          </>}
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
               {t("reply to their comments under the post")}
@@ -903,6 +928,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           )}
         </Section>
 
+        {!creatingFlow && <>
         <Section title={t("They will get")}>
           <div className="rounded-lg border border-border p-3">
             <div className="flex items-center justify-between">
@@ -1207,10 +1233,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             </p>
           </div>
         </Section>
+        </>}
       </div>
+      </details>
 
-      {/* Right: preview */}
-      <div>
+      {/* Conversation is editable before the campaign exists. */}
+      <div className="min-w-0">
+        {creatingFlow ? <FlowBuilder key={flowEpoch} campaignId="new-campaign" creation={{ definition: flow, onChange: setFlow, campaign: { id: "new-campaign", name: name || "Nueva campaña", isActive: false, keywords, matchAnyWord: matchMode === "any", matchAnyPost: triggerScope === "any", pendingNextReel: triggerScope === "next", postId, instagramAccount: { username } }, onConfigure: () => { setEntryOpen(true); document.querySelector(".campaign-create-entry")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, onSave: () => void handleSubmit(false), saving }} /> : <>
         <p className="mb-4 text-sm text-muted">{t("Preview")}</p>
         <div className="flex min-w-0 justify-center lg:sticky lg:top-6 lg:block">
           <CampaignPreview
@@ -1248,6 +1277,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             askThanksMessage={askThanksMessage}
           />
         </div>
+        </>}
       </div>
       </div>
     </div>

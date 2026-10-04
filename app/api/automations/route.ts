@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
+import type { Prisma } from "@/app/generated/prisma/client";
+import { flowDefinitionSchema, validateFlowDefinition } from "@/lib/flows/definition";
 import { z } from "zod";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
@@ -69,6 +72,7 @@ const createAutomationSchema = z
       .nullable(),
     secondaryButtonLabel: z.string().max(20).optional().nullable(),
     isActive: z.boolean().optional().default(true),
+    flowDefinition: flowDefinitionSchema.optional(),
     wholeWordMatch: z.boolean().optional().default(true),
     ...campaignContactFields,
   })
@@ -363,6 +367,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const graph = parsed.data.flowDefinition;
+  if (graph && parsed.data.dmTriggerEnabled) {
+    return NextResponse.json({ success: false, error: "El flujo visual comienza con un comentario de Reel." }, { status: 400 });
+  }
+  if (graph && parsed.data.isActive) {
+    const validation = validateFlowDefinition(graph);
+    if (!validation.valid) {
+      return NextResponse.json({ success: false, error: "Completá el flujo antes de activar la campaña.", issues: validation.issues }, { status: 400 });
+    }
+    for (const node of graph.nodes) {
+      if (node.type !== "action" || node.data.action !== "start_flow") continue;
+      const target = await prisma.automation.findFirst({ where: { id: node.data.automationId, workspaceId, instagramAccountId: instagramAccount.id, flowEnabled: true, flowPublishedVersionId: { not: null } }, select: { id: true } });
+      if (!target) return NextResponse.json({ success: false, error: "El subflujo debe estar publicado en esta cuenta y espacio de trabajo." }, { status: 400 });
+    }
+  }
+
   const contactSettings = await resolveCampaignContactSettings(
     workspaceId,
     parsed.data
@@ -395,7 +415,8 @@ export async function POST(request: NextRequest) {
     .map((m) => m.trim())
     .filter(Boolean);
 
-  const automation = await prisma.automation.create({
+  const versionId = graph && parsed.data.isActive ? randomUUID() : null;
+  const createArgs = {
     data: {
       name: parsed.data.name,
       goal: parsed.data.goal,
@@ -446,6 +467,13 @@ export async function POST(request: NextRequest) {
       workspaceId,
       instagramAccountId: instagramAccount.id,
       reportShareSlug: generateReportShareSlug(),
+      ...(graph ? {
+        flowDraft: graph as unknown as Prisma.InputJsonValue,
+        flowDraftRevision: 1,
+        flowEnabled: !!versionId,
+        flowPublishedVersionId: versionId,
+        ...(versionId ? { flowVersions: { create: { id: versionId, workspaceId, version: 1, definition: graph as unknown as Prisma.InputJsonValue } } } : {}),
+      } : {}),
       ...(linkCreates.length > 0
         ? { trackedLinks: { create: linkCreates } }
         : {}),
@@ -453,7 +481,18 @@ export async function POST(request: NextRequest) {
     include: {
       trackedLinks: true,
     },
-  });
+  } satisfies Prisma.AutomationCreateArgs;
+
+  // The campaign must never become active between its creation and saving the
+  // conversation. A failed version or field write rolls the whole save back.
+  const automation = graph ? await prisma.$transaction(async (tx) => {
+    const created = await tx.automation.create(createArgs);
+    if (versionId) for (const node of graph.nodes) {
+      const key = node.type === "input" ? node.data.fieldKey : node.type === "action" ? node.data.fieldKey : undefined;
+      if (key && !["email", "phone"].includes(key)) await tx.contactField.upsert({ where: { workspaceId_key: { workspaceId, key } }, create: { workspaceId, key, label: key }, update: {} });
+    }
+    return created;
+  }) : await prisma.automation.create(createArgs);
 
   return NextResponse.json(
     { success: true, data: automation },

@@ -4,12 +4,14 @@ Esta guía describe el armador visual implementado en OpenReply. Permite iniciar
 
 ## Crear y activar un flujo
 
-1. Creá una campaña y elegí la cuenta de Instagram, el Reel, las palabras que activan la respuesta y las exclusiones. Podés usar **Próximo Reel** para prepararla antes de publicar desde Instagram.
-2. Abrí la campaña y elegí **Armar flujo**. Desde la edición de una campaña existente también aparece **Armar flujo visual**.
-3. Revisá el recorrido generado desde tu configuración actual o elegí una plantilla. Las plantillas reemplazan el borrador abierto.
-4. Agregá pasos desde el catálogo. Podés arrastrarlos al lienzo, moverlos y acercar o alejar la vista. Para conectar, tocá una salida y luego el paso de destino; también podés elegir el destino en **Conectar salidas**.
-5. Usá **Validar** para localizar pasos incompletos y **Probar** para recorrer la conversación sin enviar mensajes reales.
-6. Elegí **Guardar borrador** para conservar el trabajo o **Publicar y activar** para que los nuevos comentarios utilicen esa versión.
+1. Entrá en **Nueva campaña**: el flujo aparece directamente, antes de crear o guardar la campaña.
+2. Abrí **Cuándo empieza** y elegí la cuenta de Instagram, el Reel, las palabras que activan la respuesta y las exclusiones. Podés usar **Próximo Reel** para prepararla antes de publicar desde Instagram. Cerrá ese panel para volver a la conversación.
+3. Personalizá el recorrido inicial o elegí una plantilla. Las plantillas reemplazan el borrador abierto. En **Pasos** ves la conversación en orden; **Mapa** muestra sus conexiones.
+4. Agregá pasos desde el catálogo o con el **+** de una salida para insertarlos en ese lugar. Seleccioná un paso para editarlo en el panel derecho.
+5. Revisá el indicador de puntos pendientes y usá **Probar flujo** para recorrer la conversación sin enviar mensajes reales.
+6. **Guardar borrador** crea la campaña pausada con el flujo que diseñaste. **Crear y activar** guarda la campaña y su primera versión publicada en una sola operación; requiere un flujo completo.
+
+Después de crearla, seguís en el mismo editor. En campañas existentes podés entrar con **Armar flujo** o **Armar flujo visual**, y guardar o publicar nuevas versiones. **Respuesta simple** permite usar el formulario anterior, necesario para campañas iniciadas por un DM. Las importaciones CSV conservan ese modo.
 
 Guardar un borrador admite conexiones pendientes, pero necesita textos, campos y direcciones con un formato válido. La publicación exige todas las salidas necesarias, un inicio y un final alcanzable. Un paso sin conectar aparece señalado. Hay un máximo de 120 pasos por flujo.
 

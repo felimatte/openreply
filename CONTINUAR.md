@@ -8,7 +8,7 @@ Estado guardado el **4 de octubre de 2026**. Este archivo resume el trabajo para
 - Rama: `main`. `origin` es este fork; `upstream` es el proyecto original de diwenne.
 - Producción: https://openreply-nine-delta.vercel.app
 - Demo del editor: https://openreply-nine-delta.vercel.app/demo/flow
-- Última revisión de aplicación publicada: `e0d34acfdb661e59ff89c781cc54fe7e21b0f3a2` (2 de octubre de 2026).
+- Primera revisión con el editor renovado publicada: `e0d34acfdb661e59ff89c781cc54fe7e21b0f3a2` (2 de octubre de 2026). Las mejoras posteriores están en el historial de `main`.
 
 El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño de los flujos. Las funcionalidades existentes le resultan adecuadas. Priorizar claridad del recorrido, edición de mensajes, conexiones, pruebas y publicación, preservando el comportamiento de las automatizaciones.
 
@@ -20,8 +20,9 @@ El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño
 - Motor de flujos, versiones, preguntas, condiciones, esperas, acciones, seguimiento de enlaces y actividad por paso.
 - Next.js y eslint-config-next actualizados a 16.3.8 en el archivo de dependencias bloqueadas.
 - Cambios publicados en la web y en el worker; migración `20261001120000_flow_builder` aplicada.
+- Creación de campañas actualizada el 4 de octubre: el flujo se ve y se edita desde **Nueva campaña**, antes de guardar. **Cuándo empieza** contiene la entrada; **Guardar borrador** conserva la campaña pausada y **Crear y activar** guarda campaña y primera versión en una transacción. Las campañas por DM y las importaciones conservan el formulario simple.
 
-Antes de publicar pasaron **618 tests**, incluyendo 40 pruebas de persistencia contra PostgreSQL temporal, la compilación de producción y lint sin errores (dos advertencias preexistentes). Se verificaron el editor en móvil, las conexiones, el guardado y el recorrido completo del simulador. El simulador no confirma la entrega real de Instagram.
+La última verificación del 4 de octubre pasó **625 tests**, incluyendo 40 pruebas de persistencia contra PostgreSQL temporal, la compilación de producción y lint sin errores (dos advertencias preexistentes). Se comprobó la nueva pantalla en el navegador, su simulador, el guardado con el mensaje personalizado y el ancho móvil de 390 px sin desbordes. También se verificó el guardado pausado y activo contra una base local temporal. El simulador no confirma la entrega real de Instagram.
 
 El 4 de octubre se volvió a comprobar: la base y Redis responden, `/api/health` informa estado `ok` y el worker de esta revisión está activo. No había cambios de código pendientes y GitHub ya contenía la revisión publicada.
 
