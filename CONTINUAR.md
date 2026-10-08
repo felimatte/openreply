@@ -14,11 +14,23 @@ El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño
 
 ## Trabajo terminado
 
+### Unidades de espera del 8 de octubre
+
+El bloque **Espera** permite elegir segundos, minutos u horas, con accesos a 30 segundos, 5 minutos, 1 hora y 24 horas. La cantidad y la unidad se conservan al guardar y volver a abrir; el lienzo y el simulador muestran la misma duración. Se mantienen las esperas por fecha y el máximo de 7 días. El motor conserva minutos canónicos (incluyendo fracciones para segundos), por lo que no necesita migración ni reemplazar el worker.
+
+Verificado: 97 pruebas de duración, motor, validación, simulador, importación y lienzo; tipos y lint sin errores. En navegador se comprobó segundos/minutos/horas y guardado con recarga. Las pruebas de motor comprueban que 30 segundos y 2 horas no continúan antes de tiempo.
+
+### Comparación pendiente de implementar con Manychat
+
+El usuario pidió por ahora las unidades de tiempo y después comparar posibles mejoras. Prioridades: botón inicial con una alternativa textual previa al envío cuando el destinatario no sea compatible; seleccionar/mover/copiar grupos de cajas y autoordenar; extender los flujos visuales a DM y Stories; tarjetas/carruseles; conversión y abandono directamente en el lienzo. No son faltantes las condiciones, etiquetas, campos, randomizador, derivación humana, versiones o simulador: ya existen.
+
+El botón de apertura está bloqueado por OpenReply en UI, validación, capacidades y motor. [Manychat lo permite](https://help.manychat.com/hc/en-us/articles/14281316989724-Instagram-Post-and-Reel-Comments-trigger), pero [Zernio advierte](https://docs.zernio.com/comments/send-private-reply-to-comment) que desde finales de agosto de 2026 Instagram rechaza botones/adjuntos para no seguidores y puede consumir igual la única respuesta privada. No habilitarlo indiscriminadamente ni intentar botón y luego reintentar texto. No siempre se puede saber si sigue la cuenta antes de la primera conversación. El transporte y los postbacks ya existen; para quick replies además falta conservar `metadata.quickReplyPayload` en la normalización de Zernio. Esta entrega no cambia la apertura.
+
 ### Lienzo libre del 8 de octubre
 
 El usuario rechazó la lista fija y pidió cajas móviles como Manychat. El editor ahora abre en **Lienzo**, también al crear campañas. Permite arrastrar cajas completas, conectar/reconectar puntos por arrastre o clic, soltar una salida en el fondo para crear una caja, insertar desde una salida y editar/eliminar líneas. El inspector solo ocupa espacio al seleccionar; flota sobre el lienzo y se adapta a móvil. Zoom, desplazamiento, encuadre y deshacer/rehacer disponibles. La inserción en una posición explícita conserva las demás posiciones.
 
-Probado en navegador: movimiento con conexiones, reconexión de una rama, recuperación con Deshacer, creación desde conector y guardado demo. Móvil a 390 px sin desborde horizontal. Pruebas: 591 generales + 5 del lienzo aprobadas; 40 de persistencia omitidas sin base de pruebas. Compilación de producción, tipos y lint aprobados (dos advertencias previas). Esta entrega está preparada para producción en https://openreply-nine-delta.vercel.app/demo/flow. No requiere migraciones nuevas ni cambios en el worker.
+Probado en navegador: movimiento con conexiones, reconexión de una rama, recuperación con Deshacer, creación desde conector y guardado demo. Móvil a 390 px sin desborde horizontal. Pruebas: 591 generales + 5 del lienzo aprobadas; 40 de persistencia omitidas sin base de pruebas. Compilación de producción, tipos y lint aprobados (dos advertencias previas). Publicado como `423b642` en https://openreply-nine-delta.vercel.app/demo/flow. Docker se recuperó renombrando los directorios de sockets temporales con todos sus procesos detenidos; el worker volvió a funcionar y `/api/health` confirmó estado `ok`. No se borraron datos ni contenedores.
 
 
 ### Mejoras del 7 de octubre incluidas en esta entrega

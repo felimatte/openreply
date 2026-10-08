@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
-import type { FlowDefinition } from "@/lib/flows/definition";
+import type { FlowDefinition, FlowDelayData } from "@/lib/flows/definition";
+import { durationFromMinutes, durationToMinutes, getDurationUnit, MAX_DELAY_MINUTES, type DurationUnit } from "@/lib/flows/duration";
 import { ACTION_LABELS, NODE_CATALOG, ports, uid, type ActionData, type BuilderNode, type ConditionData, type FlowButton, type InputData, type MessageData, type RandomizerData, type Rule } from "./model";
 import AssetUpload from "./asset-upload";
 import FlowIcon from "./flow-icon";
@@ -80,10 +81,27 @@ export default function NodeEditor({ node, definition, onChange, onConnect, onIn
   </div>;
 }
 
-function DelayEditor({ data, onChange }: { data: { minutes: number; until?: string }; onChange: (data: { minutes: number; until?: string }) => void }) {
+function DelayEditor({ data, onChange }: { data: FlowDelayData; onChange: (data: FlowDelayData) => void }) {
+  const unit = getDurationUnit(data);
+  const amount = durationFromMinutes(data.minutes, unit);
   const date = data.until ? new Date(data.until) : null;
   const localDate = date && !Number.isNaN(date.getTime()) ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
-  return <div className="space-y-4"><Select label="Cuándo continuar" value={data.until ? "date" : "duration"} options={[["duration", "Después de un tiempo"], ["date", "En una fecha y hora"]]} onChange={(value) => onChange({ ...data, until: value === "date" ? new Date(Date.now() + data.minutes * 60000).toISOString() : undefined })} />{data.until ? <Field label="Fecha y hora local"><input type="datetime-local" className={control} value={localDate} onChange={(event) => { if (event.target.value) { const next = new Date(event.target.value); if (!Number.isNaN(next.getTime())) onChange({ ...data, until: next.toISOString() }); } }} /></Field> : <><NumberField label="Esperar (minutos)" value={data.minutes} onChange={(minutes) => onChange({ ...data, minutes })} min={0.1} max={10080} /><div className="flex flex-wrap gap-2">{[5, 30, 60, 1440].map((minutes) => <button key={minutes} className={smallButton} onClick={() => onChange({ ...data, minutes })}>{minutes < 60 ? `${minutes} min` : minutes === 60 ? "1 hora" : "1 día"}</button>)}</div></>}<p className="text-xs leading-relaxed text-muted">La espera no renueva el permiso para enviar mensajes. El envío se comprueba otra vez cuando termina.</p></div>;
+  const presets: { amount: number; unit: DurationUnit; label: string }[] = [
+    { amount: 30, unit: "seconds", label: "30 seg" }, { amount: 5, unit: "minutes", label: "5 min" },
+    { amount: 1, unit: "hours", label: "1 hora" }, { amount: 24, unit: "hours", label: "24 horas" },
+  ];
+  return <div className="space-y-4">
+    <Select label="Cuándo continuar" value={data.until ? "date" : "duration"} options={[["duration", "Después de un tiempo"], ["date", "En una fecha y hora"]]} onChange={(value) => onChange({ ...data, until: value === "date" ? new Date(Date.now() + data.minutes * 60000).toISOString() : undefined })} />
+    {data.until ? <Field label="Fecha y hora local"><input type="datetime-local" className={control} value={localDate} onChange={(event) => { if (event.target.value) { const next = new Date(event.target.value); if (!Number.isNaN(next.getTime())) onChange({ ...data, until: next.toISOString() }); } }} /></Field> : <>
+      <div className="grid grid-cols-2 gap-3">
+        <NumberField label="Tiempo de espera" value={amount} onChange={(value) => onChange({ ...data, minutes: durationToMinutes(value, unit), unit })} max={durationFromMinutes(MAX_DELAY_MINUTES, unit)} />
+        <Select label="Unidad de tiempo" value={unit} options={[["seconds", "Segundos"], ["minutes", "Minutos"], ["hours", "Horas"]]} onChange={(value) => onChange({ ...data, minutes: durationToMinutes(amount, value as DurationUnit), unit: value as DurationUnit })} />
+      </div>
+      <div className="flex flex-wrap gap-2">{presets.map((preset) => <button type="button" key={preset.label} className={smallButton} onClick={() => onChange({ ...data, minutes: durationToMinutes(preset.amount, preset.unit), unit: preset.unit })}>{preset.label}</button>)}</div>
+      {(data.minutes < 0 || data.minutes > MAX_DELAY_MINUTES) && <p role="alert" className="text-xs text-warning">Elegí un tiempo entre 0 y {durationFromMinutes(MAX_DELAY_MINUTES, unit).toLocaleString("es-AR")} {unit === "seconds" ? "segundos" : unit === "hours" ? "horas" : "minutos"} (máximo 7 días).</p>}
+    </>}
+    <p className="text-xs leading-relaxed text-muted">La espera no renueva el permiso para enviar mensajes. El envío se comprueba otra vez cuando termina.</p>
+  </div>;
 }
 
 const BLOCK_LABELS = { text: "Texto", image: "Imagen", video: "Video", audio: "Audio", pdf: "PDF" };

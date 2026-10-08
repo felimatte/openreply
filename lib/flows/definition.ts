@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createFlowFromCampaign, type FlowCampaignSource } from "./from-campaign";
+import { MAX_DELAY_MINUTES, type DurationUnit } from "./duration";
 
 export type FlowNodeType = "start" | "message" | "input" | "condition" | "delay" | "action" | "randomizer" | "end";
 export type FlowMediaType = "image" | "video" | "audio" | "pdf";
@@ -13,7 +14,7 @@ export interface FlowInputData {
 export type FlowOperator = "equals" | "not_equals" | "contains" | "exists" | "not_exists" | "greater_than" | "less_than";
 export interface FlowConditionRule { field: string; operator: FlowOperator; value?: string }
 export interface FlowConditionData { rules: FlowConditionRule[]; match: "all" | "any" }
-export interface FlowDelayData { minutes: number; until?: string }
+export interface FlowDelayData { minutes: number; unit?: DurationUnit; until?: string }
 export type FlowActionType = "add_tag" | "remove_tag" | "set_field" | "clear_field" | "increment_field" | "webhook" | "goal" | "pause" | "handoff" | "start_flow";
 export interface FlowActionData {
   action: FlowActionType; tag?: string; fieldKey?: string; value?: string; url?: string; automationId?: string; note?: string;
@@ -50,7 +51,7 @@ const nodeSchema = z.discriminatedUnion("type", [
   z.object({ ...base, type: z.literal("message"), data: z.object({ blocks: z.array(block).min(1).max(10), buttons: z.array(button).max(3), quickReplies: z.array(button).max(11).optional() }) }),
   z.object({ ...base, type: z.literal("input"), data: z.object({ prompt: z.string().min(1).max(1000), inputType: z.enum(["email", "phone", "text", "number", "choice"]), fieldKey, retryMessage: z.string().max(1000), maxAttempts: z.number().int().min(1).max(5), timeoutMinutes: z.number().int().min(1).max(10080), options: z.array(z.string().min(1).max(20)).max(10).optional() }) }),
   z.object({ ...base, type: z.literal("condition"), data: z.object({ rules: z.array(z.object({ field: z.string().min(1).max(100), operator: z.enum(["equals", "not_equals", "contains", "exists", "not_exists", "greater_than", "less_than"]), value: z.string().max(1000).optional() })).min(1).max(20), match: z.enum(["all", "any"]) }) }),
-  z.object({ ...base, type: z.literal("delay"), data: z.object({ minutes: z.number().min(0).max(10080), until: z.string().datetime({ offset: true }).optional() }) }),
+  z.object({ ...base, type: z.literal("delay"), data: z.object({ minutes: z.number().min(0).max(MAX_DELAY_MINUTES), unit: z.enum(["seconds", "minutes", "hours"]).optional(), until: z.string().datetime({ offset: true }).optional() }) }),
   z.object({ ...base, type: z.literal("action"), data: z.object({ action: z.enum(["add_tag", "remove_tag", "set_field", "clear_field", "increment_field", "webhook", "goal", "pause", "handoff", "start_flow"]), tag: z.string().max(80).optional(), fieldKey: fieldKey.optional(), value: z.string().max(2000).optional(), url: url.optional(), automationId: z.string().max(100).optional(), note: z.string().max(2000).optional() }) }),
   z.object({ ...base, type: z.literal("randomizer"), data: z.object({ branches: z.array(z.object({ id, label: z.string().min(1).max(100), weight: z.number().min(0).max(100) })).min(2).max(10) }) }),
   z.object({ ...base, type: z.literal("end"), data: z.object({}) }),

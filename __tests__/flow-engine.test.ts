@@ -95,6 +95,7 @@ vi.mock("@/lib/billing/usage", () => ({ reserveWorkspaceDMSend: async () => ({ a
 vi.mock("@/lib/utils/rate-limiter", () => ({ reserveDMSlot: async () => ({ allowed: true, reserved: false }), releaseDMSlot: vi.fn() }));
 
 import { executeFlowRun, handleFlowMessage, handleFlowPostback, resumeContactFlows, startFlowRun } from "@/lib/flows/engine";
+import { durationToMinutes } from "@/lib/flows/duration";
 import { flowButtonPayload, incomingEventTime, messagingWindowOpen, parseFlowAnswer, parseFlowButtonPayload, renderFlowText, weightedBranch } from "@/lib/flows/runtime-values";
 
 const now = new Date("2026-10-01T15:00:00Z");
@@ -216,6 +217,35 @@ describe("persistent flow executor", () => {
     vi.setSystemTime(new Date(now.getTime() + 25 * 60 * 60_000)); await executeFlowRun(id);
     expect(fixtures.runs[0].status).toBe("WAITING_WINDOW"); expect(fixtures.sendText).toHaveBeenCalledTimes(1);
     await reply(id, "Hola", "reopen"); expect(fixtures.sendText).toHaveBeenCalledTimes(2); expect(fixtures.runs[0].status).toBe("COMPLETED");
+  });
+
+  it.each([
+    [30, "seconds", 30_000],
+    [2, "hours", 2 * 60 * 60_000],
+  ] as const)("schedules %s %s from canonical minutes and resumes at the exact deadline", async (value, unit, milliseconds) => {
+    const id = await start(definition([
+      node("delay", "delay", { minutes: durationToMinutes(value, unit), unit }),
+      message("later", "Mensaje después de la espera"),
+    ]));
+    await executeFlowRun(id);
+    fixtures.queue.mockClear();
+    await reply(id);
+
+    const due = new Date(now.getTime() + milliseconds);
+    expect(fixtures.runs[0]).toMatchObject({ status: "RUNNING", currentNodeId: "later", resumeAt: due });
+    expect(fixtures.queue).toHaveBeenLastCalledWith(id, due);
+    expect(fixtures.sendText).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date(due.getTime() - 1));
+    await executeFlowRun(id);
+    expect(fixtures.sendText).toHaveBeenCalledTimes(1);
+    expect(fixtures.runs[0].resumeAt).toEqual(due);
+
+    vi.setSystemTime(due);
+    await executeFlowRun(id);
+    expect(fixtures.sendText).toHaveBeenCalledTimes(2);
+    expect(fixtures.sendText.mock.calls[1][0].text).toBe("Mensaje después de la espera");
+    expect(fixtures.runs[0]).toMatchObject({ status: "COMPLETED", resumeAt: null });
   });
 
   it("restores a paused window wait and clears its deadline when a new DM arrives", async () => {

@@ -1,5 +1,6 @@
 import type { FlowDefinition, FlowNode, FlowConditionRule, FlowInputData, FlowButton } from "./definition";
 import { compareFlowValue, parseFlowAnswer, renderFlowText } from "./runtime-values";
+import { formatDelayDuration } from "./duration";
 
 const ACTION_NAMES: Record<string, string> = { add_tag: "Etiqueta agregada", remove_tag: "Etiqueta quitada", set_field: "Campo guardado", clear_field: "Campo vaciado", increment_field: "Campo incrementado", goal: "Objetivo registrado", pause: "Automatización pausada", handoff: "Conversación derivada a una persona" };
 
@@ -44,7 +45,7 @@ export function advanceSimulation(definition: FlowDefinition, previous: Simulati
         break;
       }
       case "input": add(state, "bot", personalize(node.data.prompt, state.fields), node.id); state.waiting = "input"; state.attempts = 0; break;
-      case "delay": add(state, "action", node.data.until ? `Espera hasta ${node.data.until}.` : `Espera de ${node.data.minutes} minutos.`, node.id); state.waiting = "delay"; break;
+      case "delay": add(state, "action", node.data.until ? `Espera hasta ${node.data.until}.` : `Espera de ${formatDelayDuration(node.data)}.`, node.id); state.waiting = "delay"; break;
       case "condition": { const values = { ...state.fields, window_open: String(state.windowMinutesRemaining !== null && state.windowMinutesRemaining > 0) }; const results = node.data.rules.map((rule) => simulationRuleMatches(rule, values, state.tags)); const matches = node.data.match === "all" ? results.every(Boolean) : results.some(Boolean); add(state, "action", `Condición: ${matches ? "sí" : "no"}.`, node.id); next(definition, state, node, matches ? "yes" : "no"); break; }
       case "randomizer": { const value = random() * 100; let sum = 0; const branch = node.data.branches.find((item) => { sum += item.weight; return value < sum; }) || node.data.branches.at(-1); if (!branch) { state.finished = true; break; } add(state, "action", `Variante: ${branch.label}.`, node.id); next(definition, state, node, `branch.${branch.id}`); break; }
       case "action": {

@@ -1,4 +1,5 @@
 import type { FlowDefinition } from "@/lib/flows/definition";
+import { formatDelayDuration } from "@/lib/flows/duration";
 
 export type BuilderNode = FlowDefinition["nodes"][number];
 export type NodeKind = BuilderNode["type"];
@@ -55,7 +56,7 @@ export function nodeSummary(node: BuilderNode): string {
   if (node.type === "message") return (node.data as MessageData).blocks.map((block) => block.type === "text" ? block.text : `${block.type}: ${block.name || block.url}`).join("\n").slice(0, 110);
   if (node.type === "input") return (node.data as InputData).prompt;
   if (node.type === "condition") return `${(node.data as ConditionData).rules.length} condición(es)`;
-  if (node.type === "delay") return `${(node.data as { minutes: number }).minutes} minutos`;
+  if (node.type === "delay") return node.data.until ? `Hasta ${new Date(node.data.until).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}` : formatDelayDuration(node.data);
   if (node.type === "action") { const data = node.data as ActionData; return `${ACTION_LABELS[data.action]}${data.tag ? `: ${data.tag}` : data.fieldKey ? `: ${data.fieldKey}` : ""}`; }
   if (node.type === "start") return "Usa el Reel y las palabras de esta campaña";
   if (node.type === "end") return "El recorrido termina acá";
