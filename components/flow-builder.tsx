@@ -12,6 +12,7 @@ import FlowDialog from "./flows/flow-dialog";
 import FlowJourney from "./flows/flow-journey";
 import StepPicker from "./flows/step-picker";
 import { findOpeningNodes, flowContent, insertNode, primaryPort, type InsertionPoint } from "./flows/editor-model";
+import type { MessageField } from "@/lib/flows/message-variables";
 import "./flows/flow-editor.css";
 
 interface Version { id: string; version: number; createdAt: string; publishedAt?: string | null; definition?: FlowDefinition }
@@ -47,6 +48,7 @@ export default function FlowBuilder({ campaignId, demo = false, creation, ref }:
   const definition = creation?.definition ?? storedDefinition;
   function setDefinition(next: FlowDefinition) { if (creation) creation.onChange(next); else setStoredDefinition(next); }
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [customFields, setCustomFields] = useState<MessageField[]>([]);
   const [loading, setLoading] = useState(!creation), [working, setBusy] = useState(false), [error, setError] = useState("");
   const busy = working || !!creation?.saving;
   const [notice, setNotice] = useState(""); const [saved, setSaved] = useState(() => creation ? flowContent(creation.definition) : "");
@@ -75,6 +77,19 @@ export default function FlowBuilder({ campaignId, demo = false, creation, ref }:
     setDefinition(next); setSaved(flowContent(next)); setRevision(data.draft?.revision || 0); setHistory([]); setFuture([]); setSelectedId(null);
   }
   const loadPayload = useEffectEvent((data: FlowPayload) => applyPayload(data));
+  useEffect(() => {
+    if (demo) return;
+    const controller = new AbortController();
+    fetch("/api/contacts/options", { cache: "no-store", signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = await response.json();
+        if (!controller.signal.aborted && body.success && Array.isArray(body.data?.fields)) {
+          setCustomFields(body.data.fields.filter((field: MessageField) => typeof field?.key === "string" && typeof field?.label === "string"));
+        }
+      }).catch(() => { /* The built-in variables and fields in this flow remain available. */ });
+    return () => controller.abort();
+  }, [demo, campaignId]);
   useEffect(() => {
     if (isCreating) return;
     let active = true;
@@ -215,7 +230,7 @@ export default function FlowBuilder({ campaignId, demo = false, creation, ref }:
         {(selected || viewMode === "steps") && <aside ref={inspector} className="flow-inspector" aria-label="Configuración del paso"><div className="flow-inspector-heading"><div><p className="flow-eyebrow">{selected ? "PERSONALIZÁ ESTE PASO" : "EMPEZÁ POR ACÁ"}</p><h2>{selected ? "Editar paso" : "Diseñá la conversación"}</h2></div>{selected && <button className="flow-icon-button flow-inspector-close" aria-label="Cerrar edición del paso" onClick={closeStep}><FlowIcon name="close" size={18} /><span>Volver al recorrido</span></button>}</div>
           <div className="flow-inspector-content">{selected ? <>
             {!!validation.issues.filter((issue) => issue.nodeId === selected.id).length && <div className="flow-node-issues">{validation.issues.filter((issue) => issue.nodeId === selected.id).map((issue, index) => <p key={index}><FlowIcon name="warning" size={13} />{issue.message}</p>)}</div>}
-            <fieldset disabled={!canEdit} className="min-w-0"><NodeEditor key={selected.id} node={selected} definition={definition} onChange={updateNode} onConnect={connect} onInsert={(handle) => setPicker({ at: { source: selected.id, handle } })} onDuplicate={duplicate} onDelete={() => setConfirm({ title: `¿Eliminar “${selected.label}”?`, description: "Se quitarán este paso y sus conexiones. Podés recuperarlos con Deshacer.", action: remove })} firstMessage={openingNodes.has(selected.id)} media={payload.capabilities?.media} demo={demo} /></fieldset>
+            <fieldset disabled={!canEdit} className="min-w-0"><NodeEditor key={selected.id} node={selected} definition={definition} onChange={updateNode} onConnect={connect} onInsert={(handle) => setPicker({ at: { source: selected.id, handle } })} onDuplicate={duplicate} onDelete={() => setConfirm({ title: `¿Eliminar “${selected.label}”?`, description: "Se quitarán este paso y sus conexiones. Podés recuperarlos con Deshacer.", action: remove })} firstMessage={openingNodes.has(selected.id)} media={payload.capabilities?.media} demo={demo} customFields={customFields} /></fieldset>
             {selected.type === "start" && creation && <button className="flow-button mt-4" onClick={creation.onConfigure}>Configurar Reel y palabras<FlowIcon name="arrow" size={14} /></button>}
             {selected.type === "start" && !demo && !isCreating && <Link href={`/campaigns/${campaignId}/edit`} className="flow-button mt-4">Configurar Reel y palabras<FlowIcon name="arrow" size={14} /></Link>}
             {!isCreating && <details className="flow-advanced mt-5"><summary>Actividad de este paso</summary><div>{payload.stepStats?.filter((stat) => stat.nodeId === selected.id).length ? payload.stepStats.filter((stat) => stat.nodeId === selected.id).map((stat) => <p key={stat.status} className="text-xs text-muted">{statusLabel(stat.status)}: {stat.count}</p>) : <p className="text-xs text-muted">Todavía no hay actividad en este paso.</p>}{!!selectedLinkStats.length && <div className="mt-3 space-y-2">{selectedLinkStats.map((stat) => <div key={stat.buttonId} className="rounded-lg border border-border p-2"><p className="text-xs font-medium">{selected.type === "message" ? [...selected.data.buttons, ...(selected.data.quickReplies || [])].find((button) => button.id === stat.buttonId)?.label || stat.buttonId : stat.buttonId}</p><p className="mt-1 text-xs text-muted">{stat.clicks} clics · {stat.runsClicked} recorridos</p></div>)}</div>}</div></details>}

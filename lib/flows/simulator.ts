@@ -82,7 +82,7 @@ export function respondSimulation(definition: FlowDefinition, previous: Simulati
     else {
       const text = response.text || ""; add(state, "user", text, node.id); state.windowMinutesRemaining = 1440;
       const answer = parseFlowAnswer(node.data.inputType, text, node.data.options?.map((label) => ({ label })) || []);
-      if (!answer.ok) { state.attempts++; if (state.attempts >= node.data.maxAttempts) { add(state, "action", "Se alcanzó el límite de intentos.", node.id); state.waiting = null; next(definition, state, node, "skip"); } else add(state, "bot", node.data.retryMessage || "Revisá el dato e intentá de nuevo.", node.id); }
+      if (!answer.ok) { state.attempts++; if (state.attempts >= node.data.maxAttempts) { add(state, "action", "Se alcanzó el límite de intentos.", node.id); state.waiting = null; next(definition, state, node, "skip"); } else add(state, "bot", personalize(node.data.retryMessage || "Revisá el dato e intentá de nuevo.", state.fields), node.id); }
       else { state.fields[node.data.fieldKey] = answer.value; state.fields.last_input = text.trim(); state.waiting = null; next(definition, state, node, "answered"); }
     }
   } else if (state.waiting === "message" && node.type === "message") {

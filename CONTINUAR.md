@@ -14,6 +14,14 @@ El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño
 
 ## Trabajo terminado
 
+### Personalización de mensajes con / del 8 de octubre
+
+El editor visual abre un menú al escribir `/` en mensajes, preguntas y mensajes de dato inválido. Permite buscar sin distinguir acentos, navegar con flechas, insertar con Enter/Tab o clic, cerrar con Escape y usar el botón “Insertar dato”. Conserva el texto a ambos lados del cursor y el formato `{{campo}}` que ya interpreta el worker. No intercepta barras dentro de URLs o fechas.
+
+Variables ofrecidas: usuario de Instagram (`username`), comentario inicial (`comment`), email/teléfono guardados y campos personalizados del workspace o creados por pasos de captura/asignación del flujo. El **nombre completo del perfil no se importa automáticamente**: `commenterName` es en realidad el usuario de Instagram. El nombre está disponible cuando se guarda en un campo propio, por ejemplo `nombre`. No confundir el perfil de la cuenta conectada (`/me`) con el perfil de la persona.
+
+57 pruebas relacionadas, tipos y lint dirigido aprobados. Verificado en navegador: apertura por `/`, búsqueda, clic/Enter/flechas, cierre con Escape, inserción desde botón, sustitución de usuario/comentario en simulador, descubrimiento de campo `nombre` del flujo y guardado. El simulador ahora también personaliza el mensaje de dato inválido, igual que el motor. No requiere migración ni cambiar el worker.
+
 ### Unidades de espera del 8 de octubre
 
 El bloque **Espera** permite elegir segundos, minutos u horas, con accesos a 30 segundos, 5 minutos, 1 hora y 24 horas. La cantidad y la unidad se conservan al guardar y volver a abrir; el lienzo y el simulador muestran la misma duración. Se mantienen las esperas por fecha y el máximo de 7 días. El motor conserva minutos canónicos (incluyendo fracciones para segundos), por lo que no necesita migración ni reemplazar el worker.
