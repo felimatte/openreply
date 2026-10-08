@@ -40,14 +40,15 @@ export function createNode(type: NodeKind, position = { x: 180, y: 120 }): Build
   return { id: uid(), type, label: NODE_CATALOG.find((item) => item.type === type)!.title, position, data: defaults[type] } as BuilderNode;
 }
 
-export function ports(node: BuilderNode): { id: string; label: string }[] {
+export function ports(node: BuilderNode, firstMessage = false): { id: string; label: string }[] {
   if (node.type === "end") return [];
   if (node.type === "condition") return [{ id: "yes", label: "Sí" }, { id: "no", label: "No" }];
   if (node.type === "input") return [{ id: "answered", label: "Dato recibido" }, { id: "skip", label: "Omitir" }, { id: "timeout", label: "Sin respuesta" }];
   if (node.type === "randomizer") return (node.data as RandomizerData).branches.map((branch) => ({ id: `branch.${branch.id}`, label: `${branch.label} · ${branch.weight}%` }));
   if (node.type === "message") {
     const data = node.data as MessageData;
-    return [...[...(data.buttons ?? []), ...(data.quickReplies ?? [])].filter((button) => button.kind === "continue").map((button) => ({ id: `button.${button.id}`, label: button.label || "Botón" })), { id: "next", label: "Continuar / respuesta escrita" }];
+    const replies = [...(data.buttons ?? []), ...(data.quickReplies ?? [])].filter((button) => button.kind === "continue");
+    return [...replies.map((button) => ({ id: `button.${button.id}`, label: button.label || "Botón" })), { id: "next", label: firstMessage ? "Al recibir respuesta" : replies.length ? "Si escribe una respuesta" : "Después de enviar" }];
   }
   return node.type === "action" ? [{ id: "next", label: "Continuar" }, { id: "error", label: "Si ocurre un error" }] : [{ id: "next", label: "Continuar" }];
 }

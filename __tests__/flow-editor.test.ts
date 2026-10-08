@@ -1,10 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { createNode, createTemplate } from "@/components/flows/model";
+import { createNode, createTemplate, ports } from "@/components/flows/model";
 import { findOpeningNodes, flowContent, insertNode, orderedNodes } from "@/components/flows/editor-model";
 import { validateFlowDefinition } from "@/lib/flows/definition";
 import { respondSimulation, startSimulation } from "@/lib/flows/simulator";
 
 describe("guided flow editing", () => {
+  it("distinguishes opening replies, button replies, and automatic message continuation", () => {
+    const initial = createNode("message");
+    const message = { ...initial, data: { ...initial.data, buttons: [], quickReplies: [] } } as typeof initial;
+    expect(ports(message, true).find((port) => port.id === "next")?.label).toBe("Al recibir respuesta");
+    expect(ports(message).find((port) => port.id === "next")?.label).toBe("Después de enviar");
+    const withButton = { ...message, data: { ...message.data, buttons: [{ id: "followed", kind: "continue", label: "Ya te seguí" }] } } as typeof message;
+    expect(ports(withButton).find((port) => port.id === "next")?.label).toBe("Si escribe una respuesta");
+    expect(ports(withButton).map((port) => port.id)).toEqual(["button.followed", "next"]);
+  });
+
   it("only marks messages before the first answer as the opening", () => {
     const flow = createTemplate("lead");
     const opening = flow.nodes.find((node) => node.type === "message")!;

@@ -21,7 +21,7 @@ export default function FlowJourney({ definition, selectedId, onSelect, onInsert
   return <div ref={container} className="flow-journey" aria-label="Pasos del flujo"><div className="flow-journey-intro"><span className="flow-eyebrow">TU CONVERSACIÓN, PASO A PASO</span><p>Elegí un paso para editarlo. Cada salida te muestra cómo sigue.</p></div>
     <ol className="flow-step-list">{nodes.map((node, index) => {
       const catalog = NODE_CATALOG.find((item) => item.type === node.type)!;
-      const outputs = ports(node);
+      const outputs = ports(node, openingNodes.has(node.id));
       return <li key={node.id} data-journey-node={node.id} className={`flow-step ${selectedId === node.id ? "is-selected" : ""} ${issueNodes.has(node.id) ? "has-issue" : ""}`}>
         <span className="flow-step-number">{String(index + 1).padStart(2, "0")}</span>
         <div className="flow-step-card">
@@ -31,7 +31,7 @@ export default function FlowJourney({ definition, selectedId, onSelect, onInsert
             {issueNodes.has(node.id) ? <span title="Este paso necesita revisión" className="text-warning"><FlowIcon name="warning" size={17} /></span> : <FlowIcon name="arrow" size={17} className="flow-step-arrow" />}
           </button>
           {!!outputs.length && <div className="flow-step-routes">{outputs.map((port) => {
-            const routeLabel = node.type === "message" && port.id === "next" ? openingNodes.has(node.id) || outputs.some((output) => output.id.startsWith("button.")) ? "Si responde con texto" : "Al enviar el mensaje" : port.label;
+            const routeLabel = port.label;
             const edge = definition.edges.find((item) => item.source === node.id && item.sourceHandle === port.id);
             const target = nodes.find((item) => item.id === edge?.target);
             const optional = (node.type === "action" && port.id === "error" && !["webhook", "start_flow"].includes(node.data.action)) || (node.type === "message" && port.id === "next" && outputs.some((output) => output.id.startsWith("button.")));

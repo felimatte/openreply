@@ -106,6 +106,26 @@ function definition(middle: FlowNode[] = [message("resource", "Acá está tu rec
   const nodes = [node("start", "start", {}), opening, ...middle, node("end", "end", {})];
   return { schemaVersion: 1, entryNodeId: "start", nodes, edges: nodes.slice(0, -1).map((current, index) => ({ id: `edge_${index}`, source: current.id, target: nodes[index + 1].id, sourceHandle: current.type === "input" ? "answered" : "next" })) };
 }
+function definitionWithFollowGate(): FlowDefinition {
+  return {
+    schemaVersion: 1, entryNodeId: "start",
+    nodes: [
+      node("start", "start", {}), message("opening", "Como va? Ahi te mando"),
+      node("follow_check", "condition", { match: "all", rules: [{ field: "follows", operator: "equals", value: "true" }] }),
+      node("resource", "message", { blocks: [{ type: "text", text: "Acá está tu recurso." }, { type: "image", url: "https://example.com/resource.jpg" }, { type: "pdf", url: "https://example.com/guide.pdf", name: "Guía" }], buttons: [] }),
+      node("follow_request", "message", { blocks: [{ type: "text", text: "Seguí la cuenta para recibir el recurso." }], buttons: [{ id: "followed", label: "Ya te seguí", kind: "continue" }] }),
+      node("end", "end", {}),
+    ],
+    edges: [
+      { id: "start_opening", source: "start", sourceHandle: "next", target: "opening" },
+      { id: "opening_check", source: "opening", sourceHandle: "next", target: "follow_check" },
+      { id: "follow_yes", source: "follow_check", sourceHandle: "yes", target: "resource" },
+      { id: "follow_no", source: "follow_check", sourceHandle: "no", target: "follow_request" },
+      { id: "resource_end", source: "resource", sourceHandle: "next", target: "end" },
+      { id: "follow_recheck", source: "follow_request", sourceHandle: "button.followed", target: "follow_check" },
+    ],
+  };
+}
 async function start(graph = definition()) {
   fixtures.versions.push({ id: "version", automationId: "automation", workspaceId: "workspace", definition: graph });
   const run = await startFlowRun({ automationId: "automation", instagramAccountId: "account", contactId: "contact", commentId: "comment", commentText: "GUIA", commenterId: "user", mediaId: "reel", timestamp: now.getTime() });
@@ -166,6 +186,68 @@ describe("persistent flow executor", () => {
     expect(fixtures.logs[0].status).toBe("SENT");
     expect(await handleFlowMessage({ instagramAccountId: "ig", userId: "user", messageId: "message_1", text: "SI" })).toBe(true);
     await executeFlowRun(id); expect(fixtures.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([null, new Date(now.getTime() - 25 * 60 * 60_000)])("waits before checking a follower with a closed window (%j), then delivers text, image and PDF after a reply", async (lastInboundAt) => {
+    fixtures.contacts[0].lastInboundAt = lastInboundAt;
+    fixtures.follow.mockResolvedValue(true);
+    const id = await start(definitionWithFollowGate());
+    await executeFlowRun(id);
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).not.toHaveBeenCalled();
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.sendText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ text: "Como va? Ahi te mando", commentId: "comment" }));
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "INTERACTION", currentNodeId: "opening" });
+    expect(fixtures.contacts[0].lastInboundAt).toEqual(lastInboundAt);
+
+    await reply(id);
+    expect(fixtures.follow).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendText).toHaveBeenCalledTimes(2);
+    expect(fixtures.sendText.mock.calls[1][0]).toMatchObject({ text: "Acá está tu recurso.", commentId: undefined });
+    expect(fixtures.sendMedia).toHaveBeenCalledTimes(2);
+    expect(fixtures.sendMedia).toHaveBeenNthCalledWith(1, expect.objectContaining({ userId: "user", type: "image", url: "https://example.com/resource.jpg" }));
+    expect(fixtures.sendMedia).toHaveBeenNthCalledWith(2, expect.objectContaining({ userId: "user", type: "pdf", url: "https://example.com/guide.pdf", name: "Guía" }));
+    expect(fixtures.runs[0].status).toBe("COMPLETED");
+  });
+
+  it("rechecks follow status after the follow button and delivers only when it becomes true", async () => {
+    fixtures.follow.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const id = await start(definitionWithFollowGate());
+    await executeFlowRun(id);
+    expect(fixtures.follow).not.toHaveBeenCalled();
+    await reply(id);
+
+    expect(fixtures.follow).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.sendText.mock.calls.at(-1)?.[0]).toMatchObject({ text: "Seguí la cuenta para recibir el recurso.", buttons: [{ type: "postback", title: "Ya te seguí", payload: expect.any(String) }] });
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "BUTTON", currentNodeId: "follow_request" });
+    const payload = fixtures.sendText.mock.calls.at(-1)![0].buttons[0].payload;
+    await handleFlowPostback({ instagramAccountId: "ig", userId: "user", payload, eventId: "followed_tap", timestamp: Date.now() });
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).toHaveBeenCalledTimes(2);
+    expect(fixtures.sendText.mock.calls.at(-1)?.[0].text).toBe("Acá está tu recurso.");
+    expect(fixtures.sendMedia).toHaveBeenCalledTimes(2);
+    expect(fixtures.runs[0].status).toBe("COMPLETED");
+  });
+
+  it("never delivers the gated resource when follow status cannot be verified, even after the follow button", async () => {
+    fixtures.follow.mockResolvedValue(null);
+    const id = await start(definitionWithFollowGate());
+    await executeFlowRun(id);
+    expect(fixtures.follow).not.toHaveBeenCalled();
+    await reply(id);
+    const payload = fixtures.sendText.mock.calls.at(-1)![0].buttons[0].payload;
+    await handleFlowPostback({ instagramAccountId: "ig", userId: "user", payload, eventId: "unverified_followed_tap", timestamp: Date.now() });
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).toHaveBeenCalledTimes(2);
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.sendText.mock.calls.map(([request]) => request.text)).toEqual([
+      "Como va? Ahi te mando", "Seguí la cuenta para recibir el recurso.", "Seguí la cuenta para recibir el recurso.",
+    ]);
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "BUTTON", currentNodeId: "follow_request" });
   });
 
   it("keeps the published version that the conversation started with", async () => {

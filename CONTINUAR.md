@@ -14,6 +14,14 @@ El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño
 
 ## Trabajo terminado
 
+### Revisión del flujo de seguimiento del 8 de octubre
+
+Revisadas dos ejecuciones reales del flujo comentario → saludo → condición de seguimiento → texto, imagen y PDF. Ambas estaban `WAITING / INTERACTION` en el saludo, sin error: todavía no se había evaluado la condición. Seguir la cuenta no abre la ventana de mensajes; hace falta una respuesta al primer DM. No se enviaron mensajes de prueba a contactos ni se modificaron campañas publicadas.
+
+El lienzo, la lista y el inspector ahora distinguen **Al recibir respuesta**, **Si escribe una respuesta** y **Después de enviar**. La apertura y la actividad explican la espera; el simulador la hace visible y permite probar seguimiento desconocido. 51 pruebas de editor, motor y simulador aprobadas, incluyendo entrega de los tres contenidos tras respuesta, no seguidor → botón → nueva comprobación y seguimiento desconocido sin entrega. Tipos y lint dirigido aprobados. No cambia el motor ni requiere reemplazar el worker.
+
+Se propuso al usuario cambiar el saludo a «¿Cómo va? Respondé SI y, si ya seguís la cuenta, te mando el recurso», conservando condición y adjuntos; alternativa: un enlace directo en el primer DM sin condición. Pendiente de su elección para modificar el texto de esa campaña. Las conversaciones ya iniciadas pueden continuar cuando el contacto responda.
+
 ### Personalización de mensajes con / del 8 de octubre
 
 El editor visual abre un menú al escribir `/` en mensajes, preguntas y mensajes de dato inválido. Permite buscar sin distinguir acentos, navegar con flechas, insertar con Enter/Tab o clic, cerrar con Escape y usar el botón “Insertar dato”. Conserva el texto a ambos lados del cursor y el formato `{{campo}}` que ya interpreta el worker. No intercepta barras dentro de URLs o fechas.

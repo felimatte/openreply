@@ -3,6 +3,28 @@ import { createDefaultFlow, validateFlowDefinition, type FlowDefinition } from "
 import { advanceSimulation, respondSimulation, simulationRuleMatches, startSimulation } from "@/lib/flows/simulator";
 import { createTemplate } from "@/components/flows/model";
 
+function definitionWithFollowGate(): FlowDefinition {
+  const definition = createDefaultFlow();
+  const opening = definition.nodes.find((node) => node.id === "opening");
+  const resource = definition.nodes.find((node) => node.id === "resource");
+  if (opening?.type !== "message" || resource?.type !== "message") throw new Error("Missing message fixtures");
+  opening.data = { blocks: [{ type: "text", text: "Como va? Ahi te mando" }], buttons: [] };
+  resource.data = { blocks: [{ type: "text", text: "Acá está tu recurso." }, { type: "image", url: "https://example.com/resource.jpg" }, { type: "pdf", url: "https://example.com/guide.pdf", name: "Guía" }], buttons: [] };
+  definition.nodes.push(
+    { id: "follow_check", label: "¿Sigue la cuenta?", type: "condition", position: { x: 1, y: 1 }, data: { match: "all", rules: [{ field: "follows", operator: "equals", value: "true" }] } },
+    { id: "follow_request", label: "Pedir seguimiento", type: "message", position: { x: 1, y: 2 }, data: { blocks: [{ type: "text", text: "Seguí la cuenta para recibir el recurso." }], buttons: [{ id: "followed", label: "Ya te seguí", kind: "continue" }] } },
+  );
+  definition.edges = [
+    { id: "start_opening", source: "start", sourceHandle: "next", target: "opening" },
+    { id: "opening_check", source: "opening", sourceHandle: "next", target: "follow_check" },
+    { id: "follow_yes", source: "follow_check", sourceHandle: "yes", target: "resource" },
+    { id: "follow_no", source: "follow_check", sourceHandle: "no", target: "follow_request" },
+    { id: "resource_end", source: "resource", sourceHandle: "next", target: "end" },
+    { id: "follow_recheck", source: "follow_request", sourceHandle: "button.followed", target: "follow_check" },
+  ];
+  return definition;
+}
+
 describe("flow simulator", () => {
   it("waits for user interaction before sending a second message from a comment", () => {
     const definition = createDefaultFlow();
@@ -14,6 +36,41 @@ describe("flow simulator", () => {
     expect(answered.events.filter((event) => event.kind === "bot")).toHaveLength(2);
     expect(answered.windowMinutesRemaining).toBe(1440);
     expect(answered.finished).toBe(true);
+  });
+
+  it("waits for a follower's response before checking the condition and delivering all three resource blocks", () => {
+    const definition = definitionWithFollowGate();
+    expect(validateFlowDefinition(definition)).toEqual({ valid: true, issues: [] });
+    const opening = startSimulation(definition, { username: "ana", follows: "true", comment: "GUIA" });
+    expect(opening.nodeId).toBe("opening");
+    expect(opening.waiting).toBe("message");
+    expect(opening.windowMinutesRemaining).toBeNull();
+    expect(opening.events.some((event) => event.nodeId === "follow_check")).toBe(false);
+    expect(opening.events.filter((event) => event.kind === "bot").map((event) => event.text)).toEqual(["Como va? Ahi te mando"]);
+
+    const answered = respondSimulation(definition, opening, { text: "SI" });
+    expect(answered.finished).toBe(true);
+    expect(answered.events.filter((event) => event.kind === "bot" && event.nodeId === "resource")).toEqual([
+      expect.objectContaining({ text: "Acá está tu recurso." }),
+      expect.objectContaining({ media: { type: "image", url: "https://example.com/resource.jpg" } }),
+      expect.objectContaining({ media: { type: "pdf", url: "https://example.com/guide.pdf", name: "Guía" } }),
+    ]);
+  });
+
+  it.each(["false", "unknown"])("keeps the gated resource hidden for %s follow status after replying and tapping the follow button", (follows) => {
+    const definition = definitionWithFollowGate();
+    const question = respondSimulation(definition, startSimulation(definition, { follows }), { text: "SI" });
+    expect(question.waiting).toBe("message");
+    expect(question.nodeId).toBe("follow_request");
+    expect(question.finished).toBe(false);
+    expect(question.events.some((event) => event.nodeId === "resource")).toBe(false);
+
+    const rechecked = respondSimulation(definition, question, { handle: "button.followed" });
+    expect(rechecked.waiting).toBe("message");
+    expect(rechecked.nodeId).toBe("follow_request");
+    expect(rechecked.finished).toBe(false);
+    expect(rechecked.events.some((event) => event.nodeId === "resource")).toBe(false);
+    expect(rechecked.events.filter((event) => event.nodeId === "follow_check")).toHaveLength(2);
   });
 
   it("ships connected templates with a supported plain text opening", () => {

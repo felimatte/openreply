@@ -63,7 +63,7 @@ export default function NodeEditor({ node, definition, onChange, onConnect, onIn
   useEffect(() => { latestNode.current = node; }, [node]);
   function setData(data: unknown) { onChange({ ...latestNode.current, data } as BuilderNode); }
   const catalog = NODE_CATALOG.find((item) => item.type === node.type)!;
-  const footerPorts = ports(node).filter((port) => node.type !== "message" || port.id === "next");
+  const footerPorts = ports(node, firstMessage).filter((port) => node.type !== "message" || port.id === "next");
   const waitsForReply = node.type === "message" && (firstMessage || ports(node).some((port) => port.id.startsWith("button.")));
   const nextConnected = definition.edges.some((edge) => edge.source === node.id && edge.sourceHandle === "next");
   const replyHelp = firstMessage ? "La respuesta escrita habilita los mensajes siguientes. Elegí cómo continuar."
@@ -128,7 +128,7 @@ function MessageEditor({ node, definition, onConnect, onInsert, data, onChange, 
     patch({ blocks });
   }
   return <div className="space-y-4">
-    {firstMessage && <div className="flow-opening-tip"><FlowIcon name="message" size={16} /><p><strong>Primero, abrí la conversación</strong><span>Pedí una respuesta para continuar. Este mensaje lleva solo texto.</span></p></div>}
+    {firstMessage && <div className="flow-opening-tip"><FlowIcon name="message" size={16} /><p><strong>Este mensaje espera una respuesta</strong><span>Incluí una invitación como “Respondé SI y te lo mando”. El próximo paso se ejecuta cuando responda, aunque ya siga la cuenta.</span></p></div>}
     {data.blocks.map((block, index) => <div key={index} className="flow-message-block space-y-2 rounded-xl border border-border p-3">
       <div className="flow-block-heading"><span className="flow-block-title">{BLOCK_LABELS[block.type]} · Bloque {index + 1}</span><div className="flow-block-actions"><button type="button" aria-label={`Subir bloque ${index + 1}`} disabled={index === 0} className="flow-block-control" onClick={() => moveBlock(index, -1)}><FlowIcon name="down" size={13} className="flow-block-up" />Subir</button><button type="button" aria-label={`Bajar bloque ${index + 1}`} disabled={index === data.blocks.length - 1} className="flow-block-control" onClick={() => moveBlock(index, 1)}><FlowIcon name="down" size={13} />Bajar</button><button type="button" aria-label={`Quitar bloque ${index + 1}`} className="flow-block-control is-destructive" onClick={() => patch({ blocks: data.blocks.filter((_, offset) => offset !== index) })}><FlowIcon name="trash" size={13} />Quitar</button></div></div>
       {block.type === "text" ? <><Area label="Mensaje" value={block.text} maxBytes={1000} maxCharacters={hasReplies ? 640 : undefined} onChange={(text) => updateBlock(index, { ...block, text })} variables={variables} />{hasReplies && <p className="text-[11px] text-muted">El texto con botones admite hasta 640 caracteres.</p>}</> : <><Text label="URL del archivo" value={block.url} placeholder="https://…" onChange={(url) => updateBlock(index, { ...block, url })} /><Text label="Nombre" value={block.name || ""} onChange={(name) => updateBlock(index, { ...block, name })} /><AssetUpload type={block.type} demo={demo} onUploaded={(asset) => updateBlock(index, { ...block, ...asset })} />{block.type === "pdf" && media?.pdf === false && <p className="text-xs text-warning">Esta conexión entrega el PDF como un enlace para descargarlo.</p>}</>}

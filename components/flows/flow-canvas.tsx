@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent } fr
 import type { FlowDefinition } from "@/lib/flows/definition";
 import { NODE_CATALOG, nodeSummary, ports, uid, type BuilderNode } from "./model";
 import { canConnectPort, connectPort, disconnectPort } from "./canvas-model";
-import type { InsertionPoint } from "./editor-model";
+import { findOpeningNodes, type InsertionPoint } from "./editor-model";
 import FlowIcon from "./flow-icon";
 import "./flow-canvas.css";
 
@@ -32,6 +32,7 @@ export default function FlowCanvas({ definition, selectedId, onSelect, onChange,
   const [announcement, setAnnouncement] = useState("");
   const activeEdge = definition.edges.find((edge) => edge.id === edgeId);
   const byId = new Map(definition.nodes.map((node) => [node.id, node]));
+  const openingNodes = findOpeningNodes(definition);
   const wireSource = wire && byId.get(wire.source);
 
   useEffect(() => {
@@ -148,7 +149,7 @@ export default function FlowCanvas({ definition, selectedId, onSelect, onChange,
           const source = byId.get(edge.source), target = byId.get(edge.target);
           if (!source || !target) return null;
           const path = curve(output(source, edge.sourceHandle), input(target));
-          return <g key={edge.id} data-flow-edge={edge.id} className={`flow-canvas-edge ${edge.id === edgeId || selectedId === edge.source || selectedId === edge.target ? "is-active" : ""} ${wire?.source === edge.source && wire.handle === edge.sourceHandle ? "is-replacing" : ""}`}><path d={path} className="flow-edge-line" markerEnd="url(#flow-arrow)" /><path d={path} className="flow-edge-hit" role="button" tabIndex={editable ? 0 : -1} aria-label={`Conexión de ${source.label}, ${ports(source).find((port) => port.id === edge.sourceHandle)?.label}, a ${target.label}`} onClick={(event) => { event.stopPropagation(); if (editable) { setEdgeId(edge.id); setWire(null); onSelect(null); } }} onKeyDown={(event) => { if (editable && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setEdgeId(edge.id); onSelect(null); } }} /></g>;
+          return <g key={edge.id} data-flow-edge={edge.id} className={`flow-canvas-edge ${edge.id === edgeId || selectedId === edge.source || selectedId === edge.target ? "is-active" : ""} ${wire?.source === edge.source && wire.handle === edge.sourceHandle ? "is-replacing" : ""}`}><path d={path} className="flow-edge-line" markerEnd="url(#flow-arrow)" /><path d={path} className="flow-edge-hit" role="button" tabIndex={editable ? 0 : -1} aria-label={`Conexión de ${source.label}, ${ports(source, openingNodes.has(source.id)).find((port) => port.id === edge.sourceHandle)?.label}, a ${target.label}`} onClick={(event) => { event.stopPropagation(); if (editable) { setEdgeId(edge.id); setWire(null); onSelect(null); } }} onKeyDown={(event) => { if (editable && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setEdgeId(edge.id); onSelect(null); } }} /></g>;
         })}
         {wire && wireSource && <path className="flow-wire-preview" d={curve(output(wireSource, wire.handle), wire.target && canConnectPort(definition, wire.source, wire.handle, wire.target) ? input(byId.get(wire.target)!) : wire.point)} />}
       </svg>
@@ -162,9 +163,9 @@ export default function FlowCanvas({ definition, selectedId, onSelect, onChange,
           {node.type !== "start" && <button className="flow-input-port" aria-label={`Conectar a ${node.label}`} title="Entrada de esta caja" onClick={(event) => { event.stopPropagation(); if (wire) finishConnection(node.id); else onSelect(node.id); }} />}
           <div className="flow-box-header"><span className="flow-box-icon"><FlowIcon name={node.type} size={19} /></span><div><small>{catalog.title}</small><strong>{node.label}</strong></div>{issueNodes.has(node.id) ? <span title="Revisar este paso" className="flow-box-warning"><FlowIcon name="warning" size={16} /></span> : <span className="flow-box-grip" aria-hidden="true">⠿</span>}</div>
           <div className={`flow-box-preview flow-box-preview-${node.type}`}>
-            {node.type === "start" ? <><span className="flow-box-badge">CUANDO ALGUIEN COMENTA</span><p>{trigger}</p></> : node.type === "message" ? <><p className="flow-box-bubble">{node.data.blocks[0]?.type === "text" ? node.data.blocks[0].text : nodeSummary(node)}</p><small>{node.data.blocks.length > 1 ? `${node.data.blocks.length} contenidos` : "Instagram Direct"}{node.data.buttons.some((button) => button.kind === "url") ? ` · ${node.data.buttons.find((button) => button.kind === "url")?.label} ↗` : ""}</small></> : node.type === "input" ? <><p className="flow-box-bubble">{node.data.prompt}</p><small>Guardar respuesta en <b>{node.data.fieldKey}</b></small></> : <><FlowIcon name={node.type} size={22} /><p>{nodeSummary(node)}</p></>}
+            {node.type === "start" ? <><span className="flow-box-badge">CUANDO ALGUIEN COMENTA</span><p>{trigger}</p></> : node.type === "message" ? <><p className="flow-box-bubble">{node.data.blocks[0]?.type === "text" ? node.data.blocks[0].text : nodeSummary(node)}</p><small>{openingNodes.has(node.id) ? "Primer DM · Espera una respuesta" : node.data.blocks.length > 1 ? `${node.data.blocks.length} contenidos` : "Instagram Direct"}{node.data.buttons.some((button) => button.kind === "url") ? ` · ${node.data.buttons.find((button) => button.kind === "url")?.label} ↗` : ""}</small></> : node.type === "input" ? <><p className="flow-box-bubble">{node.data.prompt}</p><small>Guardar respuesta en <b>{node.data.fieldKey}</b></small></> : <><FlowIcon name={node.type} size={22} /><p>{nodeSummary(node)}</p></>}
           </div>
-          {ports(node).map((port) => {
+          {ports(node, openingNodes.has(node.id)).map((port) => {
             const connected = definition.edges.some((edge) => edge.source === node.id && edge.sourceHandle === port.id);
             return <div key={port.id} className={`flow-box-output ${connected ? "is-connected" : ""}`}><span>{port.label}</span><button className="flow-port-add" disabled={!editable} aria-label={`Agregar caja en ${node.label}: ${port.label}`} title="Agregar una caja conectada" onClick={(event) => { event.stopPropagation(); addAfter({ source: node.id, handle: port.id }); }}><FlowIcon name="plus" size={13} /></button><button className="flow-output-port" disabled={!editable} aria-label={`Conectar desde ${node.label}: ${port.label}`} title="Arrastrá para conectar o cambiar el destino" onPointerDown={(event) => beginWire(event, node, port.id)} onClick={(event) => { event.stopPropagation(); if (event.detail === 0) { const point = output(node, port.id); setWire({ source: node.id, handle: port.id, point: { x: point.x + 80, y: point.y } }); setEdgeId(null); onSelect(null); } }} /></div>;
           })}
