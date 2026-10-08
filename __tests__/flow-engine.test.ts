@@ -96,6 +96,8 @@ vi.mock("@/lib/utils/rate-limiter", () => ({ reserveDMSlot: async () => ({ allow
 
 import { executeFlowRun, handleFlowMessage, handleFlowPostback, resumeContactFlows, startFlowRun } from "@/lib/flows/engine";
 import { durationToMinutes } from "@/lib/flows/duration";
+import { MetaApiError } from "@/lib/instagram/provider";
+import { ZernioApiError } from "@/lib/zernio/client";
 import { flowButtonPayload, incomingEventTime, messagingWindowOpen, parseFlowAnswer, parseFlowButtonPayload, renderFlowText, weightedBranch } from "@/lib/flows/runtime-values";
 
 const now = new Date("2026-10-01T15:00:00Z");
@@ -125,6 +127,20 @@ function definitionWithFollowGate(): FlowDefinition {
       { id: "follow_recheck", source: "follow_request", sourceHandle: "button.followed", target: "follow_check" },
     ],
   };
+}
+function definitionWithOpeningButton(withNext = false): FlowDefinition {
+  const graph = definitionWithFollowGate();
+  graph.nodes = graph.nodes.filter((item) => !["follow_check", "follow_request"].includes(item.id));
+  const opening = graph.nodes.find((item) => item.id === "opening");
+  if (opening?.type !== "message") throw new Error("Missing opening fixture");
+  opening.data.buttons = [{ id: "deliver", label: "Mandámelo", kind: "continue" }];
+  graph.edges = [
+    { id: "start_opening", source: "start", sourceHandle: "next", target: "opening" },
+    { id: "button_resource", source: "opening", sourceHandle: "button.deliver", target: "resource" },
+    { id: "resource_end", source: "resource", sourceHandle: "next", target: "end" },
+    ...(withNext ? [{ id: "text_resource", source: "opening", sourceHandle: "next", target: "resource" }] : []),
+  ];
+  return graph;
 }
 async function start(graph = definition()) {
   fixtures.versions.push({ id: "version", automationId: "automation", workspaceId: "workspace", definition: graph });
@@ -248,6 +264,116 @@ describe("persistent flow executor", () => {
       "Como va? Ahi te mando", "Seguí la cuenta para recibir el recurso.", "Seguí la cuenta para recibir el recurso.",
     ]);
     expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "BUTTON", currentNodeId: "follow_request" });
+  });
+
+  it.each([false, true])("sends one initial button to a confirmed follower and delivers after the tap (optional next edge: %s)", async (withNext) => {
+    fixtures.follow.mockResolvedValue(true);
+    const id = await start(definitionWithOpeningButton(withNext));
+    await executeFlowRun(id);
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      text: "Como va? Ahi te mando", commentId: "comment", initialButtonsAllowed: true,
+      buttons: [{ type: "postback", title: "Mandámelo", payload: expect.any(String) }],
+    }));
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.contacts[0].lastInboundAt).toBeNull();
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "INTERACTION", currentNodeId: "opening" });
+    expect(fixtures.steps.find((item) => item.nodeId === "opening")?.output).toMatchObject({ openingMode: "button" });
+
+    const payload = fixtures.sendText.mock.calls[0][0].buttons[0].payload;
+    await handleFlowPostback({ instagramAccountId: "ig", userId: "user", payload, eventId: "initial_button_tap", timestamp: Date.now() });
+    await executeFlowRun(id);
+    expect(fixtures.follow).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendText).toHaveBeenCalledTimes(2);
+    expect(fixtures.sendText.mock.calls[1][0]).toMatchObject({ text: "Acá está tu recurso.", commentId: undefined, initialButtonsAllowed: false });
+    expect(fixtures.sendMedia.mock.calls.map(([request]) => request.type)).toEqual(["image", "pdf"]);
+    expect(fixtures.runs[0].status).toBe("COMPLETED");
+  });
+
+  it.each([
+    ["non-follower", false], ["unknown", null], ["lookup error", new Error("Profile unavailable")],
+  ] as const)("chooses the text alternative before sending to a %s and can follow a button-only edge after a written reply", async (_name, result) => {
+    if (result instanceof Error) fixtures.follow.mockRejectedValue(result);
+    else fixtures.follow.mockResolvedValue(result);
+    const id = await start(definitionWithOpeningButton());
+    await executeFlowRun(id);
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      text: "Como va? Ahi te mando\n\nRespondé Mandámelo para continuar.", commentId: "comment", initialButtonsAllowed: false,
+      buttons: undefined, quickReplies: undefined,
+    }));
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.contacts[0].lastInboundAt).toBeNull();
+    expect(fixtures.steps.find((item) => item.nodeId === "opening")?.output).toMatchObject({ openingMode: "text" });
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "INTERACTION", context: expect.objectContaining({ waitDefaultPort: "button.deliver" }) });
+
+    await reply(id, "Listo");
+    expect(fixtures.follow).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendText.mock.calls[1][0].text).toBe("Acá está tu recurso.");
+    expect(fixtures.sendMedia.mock.calls.map(([request]) => request.type)).toEqual(["image", "pdf"]);
+    expect(fixtures.runs[0].status).toBe("COMPLETED");
+  });
+
+  it("keeps a stored text variant on recovery even if follow status would now be confirmed", async () => {
+    fixtures.follow.mockResolvedValue(true);
+    const id = await start(definitionWithOpeningButton());
+    fixtures.runs[0].currentNodeId = "opening";
+    fixtures.steps.push({ id: "planned_opening", runId: id, nodeId: "opening", visit: 0, status: "RUNNING", startedAt: now, output: { openingMode: "text" } });
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).not.toHaveBeenCalled();
+    expect(fixtures.sendText).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ initialButtonsAllowed: false, buttons: undefined, text: "Como va? Ahi te mando\n\nRespondé Mandámelo para continuar." }));
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "INTERACTION" });
+  });
+
+  it("reuses an acknowledged initial send after a crash without another lookup or another send", async () => {
+    fixtures.follow.mockRejectedValue(new Error("Must not look up again"));
+    const id = await start(definitionWithOpeningButton());
+    fixtures.runs[0].currentNodeId = "opening";
+    fixtures.steps.push({ id: "sent_opening", runId: id, nodeId: "opening", visit: 0, status: "RUNNING", startedAt: now,
+      output: { effects: { "block.0": { status: "SENT", startedAt: now.getTime(), result: { message_id: "acknowledged" } } } } });
+    await executeFlowRun(id);
+
+    expect(fixtures.follow).not.toHaveBeenCalled();
+    expect(fixtures.sendText).not.toHaveBeenCalled();
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.runs[0]).toMatchObject({ status: "WAITING", waitType: "INTERACTION", context: expect.objectContaining({ initialSent: true }) });
+  });
+
+  it("rejects an oversized text alternative before claiming the comment's private reply", async () => {
+    const graph = definitionWithOpeningButton();
+    const opening = graph.nodes.find((item) => item.id === "opening");
+    if (opening?.type !== "message") throw new Error("Missing opening fixture");
+    opening.data.blocks = [{ type: "text", text: "🙂".repeat(250) }];
+    fixtures.follow.mockResolvedValue(false);
+    const id = await start(graph);
+    await executeFlowRun(id);
+
+    expect(fixtures.runs[0].status).toBe("FAILED");
+    expect(fixtures.sendText).not.toHaveBeenCalled();
+    expect(fixtures.receipts.has("flow-private-account-comment")).toBe(false);
+    expect(fixtures.steps.find((item) => item.nodeId === "opening")?.output).not.toHaveProperty("effects");
+  });
+
+  it.each([
+    ["Zernio consumed reply", () => new ZernioApiError(400, true)],
+    ["Meta restricted reply", () => Object.assign(new MetaApiError(2, 1545133, undefined, "Provider details"), { code: 2, subcode: 1545133 })],
+  ] as const)("preserves the private receipt for %s and never attempts a second fallback send", async (_name, makeError) => {
+    fixtures.follow.mockResolvedValue(true);
+    fixtures.sendText.mockRejectedValueOnce(makeError());
+    const id = await start(definitionWithOpeningButton());
+    await executeFlowRun(id);
+    await executeFlowRun(id);
+
+    expect(fixtures.runs[0].status).toBe("UNCERTAIN");
+    expect(fixtures.receipts.has("flow-private-account-comment")).toBe(true);
+    expect(fixtures.sendText).toHaveBeenCalledTimes(1);
+    expect(fixtures.sendMedia).not.toHaveBeenCalled();
+    expect(fixtures.runs[0].error).not.toContain("Provider details");
   });
 
   it("keeps the published version that the conversation started with", async () => {

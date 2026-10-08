@@ -25,7 +25,7 @@ describe("flow message provider contracts", () => {
     await sendFlowMediaMessage({ ...base, context: meta, type: "pdf" });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.message).toEqual({ text: `Guía.pdf\n${base.url}` });
-    expect(getFlowCapabilities("META")).toMatchObject({ media: { pdf: false }, pdfMode: "link", initialButtons: false });
+    expect(getFlowCapabilities("META")).toMatchObject({ media: { pdf: false }, pdfMode: "link", initialButtons: true });
   });
   it.each(["image", "video", "audio"] as const)("sends %s with Meta's attachment payload", async (type) => {
     fetchMock.mockResolvedValue(Response.json({ message_id: "message" }));
@@ -47,9 +47,28 @@ describe("flow message provider contracts", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body).message.attachment.payload.buttons).toEqual([{ type: "web_url", title: "Ver", url: "https://example.net" }, { type: "postback", title: "Seguir", payload: "continue:run:node" }]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
-  it("only allows plain text in the initial private reply", async () => {
+  it("requires confirmation before sending an initial button", async () => {
     await expect(sendFlowTextMessage({ context: zernio, instagramAccountId: "ig", userId: "person", commentId: "comment", text: "Hola", buttons: [{ type: "postback", title: "Seguir", payload: "continue" }] })).rejects.toThrow("apertura");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it.each(["META", "ZERNIO"] as const)("sends a confirmed follower's initial postback through %s", async (provider) => {
+    fetchMock.mockResolvedValue(Response.json(provider === "META" ? { message_id: "message" } : { messageId: "message" }));
+    const buttons = [{ type: "postback" as const, title: "Quiero la guía", payload: "flow.run.node.0.guide" }];
+    await sendFlowTextMessage({ context: provider === "META" ? meta : zernio, instagramAccountId: "ig", userId: "person", commentId: "comment", postId: "post", text: "Hola", buttons, initialButtonsAllowed: true });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    if (provider === "META") {
+      expect(body.recipient).toEqual({ comment_id: "comment" });
+      expect(body.message.attachment.payload.buttons).toEqual(buttons);
+    } else {
+      expect(fetchMock.mock.calls[0][0]).toContain("/comments/post/comment/private-reply");
+      expect(body).toEqual({ accountId: "account", message: "Hola", buttons });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("preserves the consumed private reply signal without retaining upstream secrets", async () => {
+    fetchMock.mockResolvedValue(Response.json({ message: "access token secret", details: { privateReplyConsumed: true, token: "secret" } }, { status: 400 }));
+    await expect(sendFlowTextMessage({ context: zernio, instagramAccountId: "ig", userId: "person", commentId: "comment", text: "Hola" })).rejects.toMatchObject({ privateReplyConsumed: true, code: 400 });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("sends later quick replies with the documented Zernio shape", async () => {
     fetchMock.mockResolvedValue(Response.json({ messageId: "message" }));

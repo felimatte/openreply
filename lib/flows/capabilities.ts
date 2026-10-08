@@ -16,8 +16,8 @@ export function getFlowCapabilities(provider: "META" | "ZERNIO"): FlowProviderCa
     provider,
     media: { image: true, video: true, audio: true, pdf: provider === "ZERNIO" },
     pdfMode: provider === "ZERNIO" ? "attachment" : "link",
-    // Start with one plain text private reply, then wait for a user response.
-    initialButtons: false,
+    // The executor uses an opening button only for a confirmed follower.
+    initialButtons: true,
     limits: { imageBytes: 8 * MB, videoBytes: 25 * MB, audioBytes: 25 * MB, pdfBytes: 25 * MB, textBytes: 1000, maxButtons: 3, maxQuickReplies: 13 },
     messagingWindowHours: 24,
     privateReplyWindowDays: 7,

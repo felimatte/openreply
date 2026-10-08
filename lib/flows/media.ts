@@ -17,7 +17,7 @@ export function isFlowMediaUrl(value: string): boolean {
 
 export type FlowTextButton = { type: "url"; title: string; url: string } | { type: "postback"; title: string; payload: string };
 
-export async function sendFlowTextMessage({ context, instagramAccountId, userId, commentId, postId, text, buttons, quickReplies }: {
+export async function sendFlowTextMessage({ context, instagramAccountId, userId, commentId, postId, text, buttons, quickReplies, initialButtonsAllowed = false }: {
   context: InstagramContext;
   instagramAccountId: string;
   userId: string;
@@ -26,12 +26,13 @@ export async function sendFlowTextMessage({ context, instagramAccountId, userId,
   text: string;
   buttons?: FlowTextButton[];
   quickReplies?: QuickReply[];
+  initialButtonsAllowed?: boolean;
 }): Promise<{ message_id: string; recipient_id?: string }> {
   if (!text.trim() || Buffer.byteLength(text) > 1000 || ((buttons?.length ?? 0) > 0 && text.length > 640)) throw new Error("El mensaje supera el límite permitido por Instagram.");
   if ((buttons?.length ?? 0) > 3 || (quickReplies?.length ?? 0) > 13 || (buttons?.length && quickReplies?.length)) throw new Error("Las opciones del mensaje no son válidas.");
   if (buttons?.some((button) => !button.title.trim() || button.title.length > 20 || (button.type === "url" ? !isFlowMediaUrl(button.url) : !button.payload || Buffer.byteLength(button.payload) > 1000))) throw new Error("El botón no es válido.");
   if (quickReplies?.some((reply) => reply.content_type !== "text" || !reply.title.trim() || reply.title.length > 20 || !reply.payload || Buffer.byteLength(reply.payload) > 1000)) throw new Error("La respuesta rápida no es válida.");
-  if (commentId && (buttons?.length || quickReplies?.length)) throw new Error("La apertura debe ser texto; las opciones se muestran después de recibir una respuesta.");
+  if (commentId && (quickReplies?.length || (buttons?.length && (!initialButtonsAllowed || buttons.length !== 1 || buttons[0].type !== "postback")))) throw new Error("La apertura admite un botón de continuación sólo cuando Instagram confirmó el seguimiento.");
   if (context.provider === "ZERNIO") {
     const path = commentId ? `/inbox/comments/${encodeURIComponent(postId ?? commentId)}/${encodeURIComponent(commentId)}/private-reply` : `/inbox/conversations/${encodeURIComponent(userId)}/messages`;
     const body = { accountId: context.accountId, message: text, ...(buttons?.length ? { buttons } : {}), ...(quickReplies?.length ? { quickReplies: quickReplies.map(({ title, payload }) => ({ title, payload })) } : {}) };

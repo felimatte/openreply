@@ -25,6 +25,16 @@ function definitionWithFollowGate(): FlowDefinition {
   return definition;
 }
 
+function withOpeningButton(definition: FlowDefinition): FlowDefinition {
+  const opening = definition.nodes.find((node) => node.id === "opening");
+  if (opening?.type !== "message") throw new Error("Missing opening fixture");
+  opening.data.buttons = [{ id: "continue", label: "Quiero la guía", kind: "continue" }];
+  const continuation = definition.edges.find((edge) => edge.source === opening.id && edge.sourceHandle === "next");
+  if (!continuation) throw new Error("Missing opening continuation");
+  continuation.sourceHandle = "button.continue";
+  return definition;
+}
+
 describe("flow simulator", () => {
   it("waits for user interaction before sending a second message from a comment", () => {
     const definition = createDefaultFlow();
@@ -55,6 +65,57 @@ describe("flow simulator", () => {
       expect.objectContaining({ media: { type: "image", url: "https://example.com/resource.jpg" } }),
       expect.objectContaining({ media: { type: "pdf", url: "https://example.com/guide.pdf", name: "Guía" } }),
     ]);
+  });
+
+  it("lets a confirmed follower tap the opening button before delivering all three resource blocks", () => {
+    const definition = withOpeningButton(definitionWithFollowGate());
+    const opening = startSimulation(definition, { username: "ana", follows: "true" });
+    expect(opening.windowMinutesRemaining).toBeNull();
+    expect(opening.waiting).toBe("message");
+    expect(opening.events.filter((event) => event.kind === "bot")).toEqual([
+      expect.objectContaining({ text: "Como va? Ahi te mando", buttons: [{ id: "continue", label: "Quiero la guía", kind: "continue" }] }),
+    ]);
+    expect(opening.events.some((event) => event.text.includes("clic o una respuesta"))).toBe(true);
+    expect(opening.events.some((event) => event.nodeId === "resource")).toBe(false);
+
+    const answered = respondSimulation(definition, opening, { handle: "button.continue" });
+    expect(answered.windowMinutesRemaining).toBe(1440);
+    expect(answered.finished).toBe(true);
+    expect(answered.events.filter((event) => event.kind === "bot" && event.nodeId === "resource")).toEqual([
+      expect.objectContaining({ text: "Acá está tu recurso." }),
+      expect.objectContaining({ media: { type: "image", url: "https://example.com/resource.jpg" } }),
+      expect.objectContaining({ media: { type: "pdf", url: "https://example.com/guide.pdf", name: "Guía" } }),
+    ]);
+  });
+
+  it.each(["false", "unknown", undefined])("uses text instead of an opening button for %s follow status and preserves its route", (follows) => {
+    const definition = withOpeningButton(createDefaultFlow());
+    const fields: Record<string, string> = { username: "ana" };
+    if (follows !== undefined) fields.follows = follows;
+    const opening = startSimulation(definition, fields);
+    const firstMessage = opening.events.find((event) => event.kind === "bot");
+    expect(firstMessage?.buttons).toEqual([]);
+    expect(firstMessage?.text).toContain("Quiero la guía");
+    expect(opening.windowMinutesRemaining).toBeNull();
+    expect(opening.waiting).toBe("message");
+    expect(opening.finished).toBe(false);
+    expect(opening.events.some((event) => event.kind === "warning")).toBe(false);
+    expect(opening.events.some((event) => event.kind === "action" && event.text.includes("respuesta escrita"))).toBe(true);
+    expect(opening.events.some((event) => event.nodeId === "resource")).toBe(false);
+
+    const answered = respondSimulation(definition, opening, { text: "QUIERO LA GUÍA" });
+    expect(answered.windowMinutesRemaining).toBe(1440);
+    expect(answered.finished).toBe(true);
+    expect(answered.events.filter((event) => event.kind === "bot" && event.nodeId === "resource")).toHaveLength(1);
+  });
+
+  it("keeps the sole opening button's path for an unmatched written reply when no default route exists", () => {
+    const definition = withOpeningButton(createDefaultFlow());
+    const opening = startSimulation(definition, { follows: "unknown" });
+    const answered = respondSimulation(definition, opening, { text: "Sí, por favor" });
+    expect(answered.finished).toBe(true);
+    expect(answered.windowMinutesRemaining).toBe(1440);
+    expect(answered.events.filter((event) => event.kind === "bot" && event.nodeId === "resource")).toHaveLength(1);
   });
 
   it.each(["false", "unknown"])("keeps the gated resource hidden for %s follow status after replying and tapping the follow button", (follows) => {

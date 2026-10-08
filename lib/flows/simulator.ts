@@ -1,6 +1,7 @@
 import type { FlowDefinition, FlowNode, FlowConditionRule, FlowInputData, FlowButton } from "./definition";
 import { compareFlowValue, parseFlowAnswer, renderFlowText } from "./runtime-values";
 import { formatDelayDuration } from "./duration";
+import { openingFallbackText } from "./opening-message";
 
 const ACTION_NAMES: Record<string, string> = { add_tag: "Etiqueta agregada", remove_tag: "Etiqueta quitada", set_field: "Campo guardado", clear_field: "Campo vaciado", increment_field: "Campo incrementado", goal: "Objetivo registrado", pause: "Automatización pausada", handoff: "Conversación derivada a una persona" };
 
@@ -37,9 +38,19 @@ export function advanceSimulation(definition: FlowDefinition, previous: Simulati
       case "end": add(state, "action", "Recorrido finalizado.", node.id); state.finished = true; break;
       case "message": {
         if (state.hasSentOpening && (state.windowMinutesRemaining === null || state.windowMinutesRemaining <= 0)) { add(state, "warning", "La ventana de 24 horas está cerrada. Este mensaje no se enviaría.", node.id); state.finished = true; break; }
-        for (const block of node.data.blocks) add(state, "bot", block.type === "text" ? personalize(block.text, state.fields) : block.name || block.type, node.id, block.type === "text" ? undefined : block);
-        if (state.events.at(-1)) state.events.at(-1)!.buttons = [...node.data.buttons, ...(node.data.quickReplies || [])];
-        if (!state.hasSentOpening) { state.hasSentOpening = true; state.waiting = "message"; add(state, "action", "Esperando una respuesta para habilitar la conversación.", node.id); }
+        const openingButton = !state.hasSentOpening ? node.data.buttons.find((button) => button.kind === "continue") : undefined;
+        const textOpening = openingButton && state.fields.follows !== "true";
+        const visibleButtons = textOpening ? [] : [...node.data.buttons, ...(node.data.quickReplies || [])];
+        for (const block of node.data.blocks) {
+          const text = block.type === "text" ? personalize(block.text, state.fields) : block.name || block.type;
+          add(state, "bot", textOpening && block.type === "text" ? openingFallbackText(text, openingButton.label) : text, node.id, block.type === "text" ? undefined : block);
+        }
+        if (state.events.at(-1)) state.events.at(-1)!.buttons = visibleButtons;
+        if (!state.hasSentOpening) {
+          state.hasSentOpening = true; state.waiting = "message";
+          if (textOpening) add(state, "action", "Instagram no confirmó que la persona siga la cuenta. La apertura usa una respuesta escrita para continuar.", node.id);
+          add(state, "action", visibleButtons.some((button) => button.kind === "continue") ? "Esperando un clic o una respuesta para habilitar la conversación." : "Esperando una respuesta para habilitar la conversación.", node.id);
+        }
         else if ([...node.data.buttons, ...(node.data.quickReplies || [])].some((button) => button.kind === "continue")) state.waiting = "message";
         else next(definition, state, node, "next");
         break;

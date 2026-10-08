@@ -12,6 +12,30 @@ describe("published flow validation", () => {
     opening.data.blocks = [{ type: "pdf", url: "https://example.com/guide.pdf" }];
     expect(validateFlowDefinition(graph).issues.some((issue) => issue.nodeId === "opening")).toBe(true);
   });
+  it("allows one opening continuation button with the same written route", () => {
+    const graph = createDefaultFlow();
+    const opening = graph.nodes.find((node) => node.id === "opening");
+    if (opening?.type !== "message") throw new Error("Fixture");
+    opening.data.buttons = [{ id: "guide", label: "Quiero la guía", kind: "continue" }];
+    graph.edges.find((edge) => edge.source === "opening")!.sourceHandle = "button.guide";
+    expect(validateFlowDefinition(graph).valid).toBe(true);
+    opening.data.quickReplies = [{ id: "reply", label: "Otra opción", kind: "continue" }];
+    expect(validateFlowDefinition(graph).valid).toBe(false);
+    opening.data.quickReplies = [];
+    opening.data.buttons.push({ id: "other", label: "Otro", kind: "continue" });
+    expect(validateFlowDefinition(graph).valid).toBe(false);
+    opening.data.buttons = [{ id: "guide", label: "Ver guía", kind: "url", url: "https://example.com" }];
+    expect(validateFlowDefinition(graph).issues.some((issue) => issue.nodeId === "opening" && issue.message.includes("apertura"))).toBe(true);
+  });
+  it("reserves space for the initial button's written alternative", () => {
+    const graph = createDefaultFlow();
+    const opening = graph.nodes.find((node) => node.id === "opening");
+    if (opening?.type !== "message") throw new Error("Fixture");
+    opening.data.buttons = [{ id: "guide", label: "Quiero la guía", kind: "continue" }];
+    graph.edges.push({ id: "button_route", source: "opening", sourceHandle: "button.guide", target: "resource" });
+    opening.data.blocks = [{ type: "text", text: "á".repeat(490) }];
+    expect(validateFlowDefinition(graph).issues.some((issue) => issue.nodeId === "opening" && issue.message.includes("alternativa"))).toBe(true);
+  });
   it("allows PDFs and multiple media blocks after the opening", () => {
     const graph = createDefaultFlow();
     const resource = graph.nodes.find((node) => node.id === "resource");

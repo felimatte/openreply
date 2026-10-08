@@ -14,13 +14,21 @@ El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño
 
 ## Trabajo terminado
 
+### Botón de apertura del 8 de octubre
+
+El primer mensaje admite **un botón de continuación**, con texto y destino editables. El motor consulta seguimiento antes del envío: con seguimiento confirmado envía texto y botón; si no puede confirmarlo, envía el mismo texto más «Respondé ETIQUETA para continuar». La etiqueta escrita toma la misma ruta del botón. La variante se conserva en el paso para la recuperación, y el recorrido espera clic o respuesta antes de los siguientes DM. Los enlaces y las respuestas rápidas se mantienen para mensajes posteriores.
+
+El simulador reproduce ambas variantes según el perfil de prueba. Un rechazo que indique `privateReplyConsumed` o Meta `2/1545133` conserva la reserva y detiene la ejecución para revisión, sin intentar una segunda apertura. No se cambiaron campañas existentes ni se enviaron mensajes de prueba a contactos. 115 pruebas relacionadas aprobadas; tipos y verificaciones de editor/clic/alternativa escrita comprobados.
+
+La entrega requiere web y worker. `openreply-worker` ya usa `openreply:opening-button-20261008`, preparada a partir del runtime instalado con todos los módulos actuales de `lib/flows` y `lib/zernio/client.ts`. Carga de módulos comprobada y `/api/health` confirmó `ok`, worker saludable y hostname `862ad750c5d3`. El contexto sin credenciales queda ignorado en `progress/worker-opening-build`. Respaldo detenido: `openreply-worker-pre-opening-20261008`; ejecutar un solo worker. No requiere migración de datos.
+
 ### Revisión del flujo de seguimiento del 8 de octubre
 
 Revisadas dos ejecuciones reales del flujo comentario → saludo → condición de seguimiento → texto, imagen y PDF. Ambas estaban `WAITING / INTERACTION` en el saludo, sin error: todavía no se había evaluado la condición. Seguir la cuenta no abre la ventana de mensajes; hace falta una respuesta al primer DM. No se enviaron mensajes de prueba a contactos ni se modificaron campañas publicadas.
 
 El lienzo, la lista y el inspector ahora distinguen **Al recibir respuesta**, **Si escribe una respuesta** y **Después de enviar**. La apertura y la actividad explican la espera; el simulador la hace visible y permite probar seguimiento desconocido. 51 pruebas de editor, motor y simulador aprobadas, incluyendo entrega de los tres contenidos tras respuesta, no seguidor → botón → nueva comprobación y seguimiento desconocido sin entrega. Tipos y lint dirigido aprobados. No cambia el motor ni requiere reemplazar el worker.
 
-Se propuso al usuario cambiar el saludo a «¿Cómo va? Respondé SI y, si ya seguís la cuenta, te mando el recurso», conservando condición y adjuntos; alternativa: un enlace directo en el primer DM sin condición. Pendiente de su elección para modificar el texto de esa campaña. Las conversaciones ya iniciadas pueden continuar cuando el contacto responda.
+Se propuso cambiar el saludo a una invitación a responder. El usuario confirmó que la respuesta resolvió la espera y luego pidió habilitar un botón de apertura. Las conversaciones ya iniciadas pueden continuar cuando el contacto responda; el nuevo botón se puede agregar al editar y publicar la campaña.
 
 ### Personalización de mensajes con / del 8 de octubre
 
@@ -40,7 +48,7 @@ Verificado: 97 pruebas de duración, motor, validación, simulador, importación
 
 El usuario pidió por ahora las unidades de tiempo y después comparar posibles mejoras. Prioridades: botón inicial con una alternativa textual previa al envío cuando el destinatario no sea compatible; seleccionar/mover/copiar grupos de cajas y autoordenar; extender los flujos visuales a DM y Stories; tarjetas/carruseles; conversión y abandono directamente en el lienzo. No son faltantes las condiciones, etiquetas, campos, randomizador, derivación humana, versiones o simulador: ya existen.
 
-El botón de apertura está bloqueado por OpenReply en UI, validación, capacidades y motor. [Manychat lo permite](https://help.manychat.com/hc/en-us/articles/14281316989724-Instagram-Post-and-Reel-Comments-trigger), pero [Zernio advierte](https://docs.zernio.com/comments/send-private-reply-to-comment) que desde finales de agosto de 2026 Instagram rechaza botones/adjuntos para no seguidores y puede consumir igual la única respuesta privada. No habilitarlo indiscriminadamente ni intentar botón y luego reintentar texto. No siempre se puede saber si sigue la cuenta antes de la primera conversación. El transporte y los postbacks ya existen; para quick replies además falta conservar `metadata.quickReplyPayload` en la normalización de Zernio. Esta entrega no cambia la apertura.
+El botón de apertura está habilitado con una alternativa textual previa al envío cuando no se puede confirmar seguimiento. [Manychat lo permite](https://help.manychat.com/hc/en-us/articles/14281316989724-Instagram-Post-and-Reel-Comments-trigger), pero [Zernio advierte](https://docs.zernio.com/comments/send-private-reply-to-comment) que desde finales de agosto de 2026 Instagram rechaza botones/adjuntos para no seguidores y puede consumir igual la única respuesta privada. No intentar botón y luego reintentar texto. Para quick replies además falta conservar `metadata.quickReplyPayload` en la normalización de Zernio, por lo que no se ofrecen en la apertura.
 
 ### Lienzo libre del 8 de octubre
 

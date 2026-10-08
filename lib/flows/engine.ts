@@ -13,6 +13,7 @@ import { sendFlowMediaMessage, sendFlowTextMessage } from "./media";
 import { executeFlowHttpAction, FlowHttpActionError } from "./http-action";
 import { buildFlowTrackedUrl } from "./tracking";
 import { enqueueFlowRun } from "./queue";
+import { openingFallbackText } from "./opening-message";
 import { compareFlowValue, flowButtonPayload, incomingEventTime, messagingWindowOpen, parseFlowAnswer, parseFlowButtonPayload, PRIVATE_REPLY_WINDOW_MS, renderFlowText, weightedBranch } from "./runtime-values";
 
 const LEASE_MS = 60_000;
@@ -27,7 +28,7 @@ type RunContext = {
   publicReplies?: string[];
 };
 type EffectResult = { status: "CLAIMED" | "SENT" | "FAILED"; result?: unknown; startedAt?: number };
-type StepOutput = { effects?: Record<string, EffectResult>; port?: string; waiting?: boolean; visitCounted?: boolean };
+type StepOutput = { effects?: Record<string, EffectResult>; port?: string; waiting?: boolean; visitCounted?: boolean; openingMode?: "button" | "text" };
 const INCLUDE = { version: true, automation: true, contact: { include: { tags: { include: { tag: true } } } }, instagramAccount: true } as const;
 function json(value: unknown): Prisma.InputJsonValue { return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue; }
 function contextOf(run: FlowRun) { return run.context as unknown as RunContext; }
@@ -175,6 +176,10 @@ async function effect(run: LoadedRun, step: FlowStepRun, key: string, send: () =
     await prisma.flowStepRun.update({ where: { id: step.id }, data: { output: json(output) } });
     return result;
   } catch (error) {
+    if (kind === "private" && ((error instanceof ZernioApiError && error.privateReplyConsumed) ||
+      (error instanceof MetaApiError && error.code === 2 && error.subcode === 1545133))) {
+      throw new UncertainEffect("Instagram consumió la respuesta privada de este comentario. Revisá la conversación antes de continuar; no se enviará otro mensaje de apertura.");
+    }
     const confirmed = (error instanceof MetaApiError && error.code < 500) || (error instanceof ZernioApiError && error.code < 500) ||
       (error instanceof FlowHttpActionError && ["INVALID_URL", "PRIVATE_DESTINATION", "INVALID_PAYLOAD"].includes(error.code));
     if (!confirmed || error instanceof ZernioDeliveryUnconfirmedError) throw new UncertainEffect(errorText(error));
@@ -222,8 +227,28 @@ async function sendMessageNode(run: LoadedRun, node: Extract<FlowNode, { type: "
   const ctx = contextOf(run);
   const initial = !ctx.initialSent;
   if (initial && (data.blocks.length !== 1 || data.blocks[0].type !== "text")) throw new Error("La apertura del comentario necesita un único bloque de texto.");
-  if (initial && (data.buttons.length || data.quickReplies?.length)) throw new Error("La apertura necesita texto sin opciones; agregá los botones después de la primera respuesta.");
+  if (initial && (data.buttons.length > 1 || data.buttons.some((button) => button.kind !== "continue") || data.quickReplies?.length)) throw new Error("La apertura admite un único botón para continuar; los enlaces y respuestas rápidas van después de la primera respuesta.");
   if ((data.buttons.length || data.quickReplies?.length) && (data.blocks.length !== 1 || data.blocks[0].type !== "text")) throw new Error("Las opciones necesitan un único bloque de texto.");
+  const openingButton = initial ? data.buttons[0] : undefined;
+  let openingMode: StepOutput["openingMode"];
+  let openingAlreadySent = false;
+  if (openingButton) {
+    const savedOutput = outputOf(await prisma.flowStepRun.findUniqueOrThrow({ where: { id: step.id } }));
+    openingAlreadySent = savedOutput.effects?.["block.0"]?.status === "SENT";
+    openingMode = savedOutput.openingMode;
+    if (!openingMode) {
+      // A saved send must never be retried or depend on another profile lookup.
+      // Without a recorded variant, use the conservative text mode for recovery.
+      openingMode = "text";
+      if (!savedOutput.effects?.["block.0"]) {
+        try {
+          const follows = await getUserFollowStatus({ context: await createInstagramContext(run.instagramAccount), recipientId: ctx.commenterId });
+          if (follows === true) openingMode = "button";
+        } catch { /* Unverifiable followers receive the text alternative. */ }
+      }
+      await prisma.flowStepRun.update({ where: { id: step.id }, data: { output: json({ ...savedOutput, openingMode }) } });
+    }
+  }
   const values = valuesFor(run);
   const buttons = await Promise.all(data.buttons.map(async (button) => button.kind === "url"
     ? { type: "url" as const, title: button.label, url: await buildFlowTrackedUrl({ runId: run.id, nodeId: node.id, buttonId: button.id, url: renderFlowText(button.url ?? "", values) }) }
@@ -231,10 +256,17 @@ async function sendMessageNode(run: LoadedRun, node: Extract<FlowNode, { type: "
   const quickReplies = data.quickReplies?.map((button) => ({ content_type: "text" as const, title: button.label, payload: flowButtonPayload({ runId: run.id, nodeId: node.id, visit: step.visit, buttonId: button.id }) }));
   for (let i = 0; i < data.blocks.length; i++) {
     const block = data.blocks[i];
+    const renderedText = block.type === "text" ? renderFlowText(block.text, values) : undefined;
+    const text = openingButton && openingMode === "text" ? openingFallbackText(renderedText!, openingButton.label) : renderedText;
+    const visibleButtons = !initial || openingMode === "button" ? buttons : [];
+    if (openingButton && !openingAlreadySent && (!text?.trim() || Buffer.byteLength(text) > 1000 || (openingMode === "button" && text.length > 640))) {
+      throw new Error("La apertura supera el límite permitido por Instagram, incluida su alternativa de respuesta escrita.");
+    }
     const context = await createInstagramContext(run.instagramAccount, `flow:${step.id}:${i}`);
     await effect(run, step, `block.${i}`, () => block.type === "text"
       ? sendFlowTextMessage({ context, instagramAccountId: run.instagramAccount.instagramId, userId: ctx.commenterId, commentId: initial ? run.commentId ?? undefined : undefined,
-        postId: ctx.mediaId, text: renderFlowText(block.text, values), buttons: buttons.length ? buttons : undefined, quickReplies: quickReplies?.length ? quickReplies : undefined })
+        postId: ctx.mediaId, text: text!, buttons: visibleButtons.length ? visibleButtons : undefined, quickReplies: quickReplies?.length ? quickReplies : undefined,
+        initialButtonsAllowed: initial && openingMode === "button" })
       : sendFlowMediaMessage({ context, instagramAccountId: run.instagramAccount.instagramId, userId: ctx.commenterId, type: block.type, url: renderFlowText(block.url, values), name: block.name }), assertLease, initial ? "private" : "dm");
   }
   if (initial) {

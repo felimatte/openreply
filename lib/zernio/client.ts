@@ -5,7 +5,7 @@ import {
 } from "@/lib/meta/client";
 
 export class ZernioApiError extends MetaApiError {
-  constructor(status: number) {
+  constructor(status: number, public readonly privateReplyConsumed = false) {
     super(
       status,
       undefined,
@@ -59,7 +59,8 @@ export async function zernioRequest<T>({
     const message = `Zernio request failed (HTTP ${response.status})`;
     if (response.status === 429) throw new RateLimitError(message);
     if (response.status === 401) throw new TokenExpiredError(message);
-    throw new ZernioApiError(response.status);
+    const details = response.status === 400 ? await response.json().catch(() => null) as { details?: { privateReplyConsumed?: unknown } } | null : null;
+    throw new ZernioApiError(response.status, details?.details?.privateReplyConsumed === true);
   }
   if (response.status === 204) return undefined as T;
   return response.json().catch(() => {

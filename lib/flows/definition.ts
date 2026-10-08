@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createFlowFromCampaign, type FlowCampaignSource } from "./from-campaign";
 import { MAX_DELAY_MINUTES, type DurationUnit } from "./duration";
+import { openingFallbackText } from "./opening-message";
 
 export type FlowNodeType = "start" | "message" | "input" | "condition" | "delay" | "action" | "randomizer" | "end";
 export type FlowMediaType = "image" | "video" | "audio" | "pdf";
@@ -173,7 +174,10 @@ export function validateFlowDefinition(value: unknown): FlowValidationResult {
     if (!node) continue;
     if (node.type === "message") {
       if (node.data.blocks.length !== 1 || node.data.blocks[0].type !== "text") add("La apertura del comentario debe tener un bloque de texto. Los demás contenidos se envían después de una respuesta.", id);
-      if (node.data.buttons.length || node.data.quickReplies?.length) add("La apertura debe pedir una respuesta por texto. Agregá botones después de esa respuesta.", id);
+      if (node.data.buttons.length > 1 || node.data.buttons.some((button) => button.kind !== "continue") || node.data.quickReplies?.length) add("La apertura admite un botón para continuar el flujo. Los enlaces y las respuestas rápidas se agregan después de la primera interacción.", id);
+      const openingButton = node.data.buttons[0];
+      const openingBlock = node.data.blocks[0];
+      if (openingButton?.kind === "continue" && openingBlock?.type === "text" && new TextEncoder().encode(openingFallbackText(openingBlock.text, openingButton.label)).length > 1000) add("Acortá la apertura: el mensaje y su alternativa de respuesta escrita deben caber en 1000 bytes.", id);
       continue;
     }
     if (node.type === "input") { add("Agregá un mensaje de apertura antes de pedir datos.", id); continue; }
