@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import { createDefaultFlow, parseFlowDefinition, validateFlowDefinition, type FlowDefinition } from "@/lib/flows/definition";
 import FlowCanvas from "./flows/flow-canvas";
 import NodeEditor from "./flows/node-editor";
@@ -11,7 +11,7 @@ import FlowIcon from "./flows/flow-icon";
 import FlowDialog from "./flows/flow-dialog";
 import FlowJourney from "./flows/flow-journey";
 import StepPicker from "./flows/step-picker";
-import { flowContent, insertNode, primaryPort, type InsertionPoint } from "./flows/editor-model";
+import { findOpeningNodes, flowContent, insertNode, primaryPort, type InsertionPoint } from "./flows/editor-model";
 import "./flows/flow-editor.css";
 
 interface Version { id: string; version: number; createdAt: string; publishedAt?: string | null; definition?: FlowDefinition }
@@ -34,17 +34,12 @@ export interface NewCampaignFlow {
   onSave: () => void;
   saving: boolean;
 }
+export interface FlowBuilderHandle { reviewIssues: () => void }
 const secondary = "flow-button";
 const STATUS_LABELS: Record<string, string> = { RUNNING: "En curso", WAITING: "Esperando respuesta", WAITING_WINDOW: "Esperando nueva interacción", DELAYED: "En espera", PAUSED: "Pausado", COMPLETED: "Finalizado", FAILED: "Error", CANCELLED: "Cancelado", EXPIRED: "Vencido", UNCERTAIN: "Envío sin confirmar", PENDING: "Pendiente", SENT: "Enviado", CLAIMED: "En proceso" };
 const statusLabel = (value: string) => STATUS_LABELS[value.toUpperCase()] || value;
 
-function findOpeningNodes(definition: FlowDefinition): Set<string> {
-  const result = new Set<string>(), visited = new Set<string>(), pending = [definition.entryNodeId];
-  while (pending.length) { const id = pending.pop()!; if (visited.has(id)) continue; visited.add(id); const node = definition.nodes.find((item) => item.id === id); if (!node) continue; if (node.type === "message") { result.add(id); continue; } if (node.type === "input") continue; pending.push(...definition.edges.filter((edge) => edge.source === id).map((edge) => edge.target)); }
-  return result;
-}
-
-export default function FlowBuilder({ campaignId, demo = false, creation }: { campaignId: string; demo?: boolean; creation?: NewCampaignFlow }) {
+export default function FlowBuilder({ campaignId, demo = false, creation, ref }: { campaignId: string; demo?: boolean; creation?: NewCampaignFlow; ref?: Ref<FlowBuilderHandle> }) {
   const isCreating = !!creation;
   const [storedPayload, setPayload] = useState<FlowPayload | null>(null);
   const payload: FlowPayload | null = creation ? { campaign: creation.campaign, draft: null, publishedVersion: null, versions: [], runs: [], capabilities: { initialButtons: false, media: { image: true, video: true, audio: true, pdf: false } }, canEdit: true } : storedPayload;
@@ -58,11 +53,12 @@ export default function FlowBuilder({ campaignId, demo = false, creation }: { ca
   const [revision, setRevision] = useState(0); const [history, setHistory] = useState<FlowDefinition[]>([]), [future, setFuture] = useState<FlowDefinition[]>([]);
   const [preview, setPreview] = useState(false), [showIssues, setShowIssues] = useState(false), [panel, setPanel] = useState<"edit" | "runs" | "versions">("edit");
   const [canvasEpoch, setCanvasEpoch] = useState(0);
-  const [viewMode, setViewMode] = useState<"steps" | "map">("steps");
-  const [picker, setPicker] = useState<{ at?: InsertionPoint } | null>(null);
+  const [viewMode, setViewMode] = useState<"steps" | "map">("map");
+  const [picker, setPicker] = useState<{ at?: InsertionPoint; position?: { x: number; y: number } } | null>(null);
   const [templatesOpen, setTemplatesOpen] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const inspector = useRef<HTMLElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
   const [confirm, setConfirm] = useState<{ title: string; description: string; action: () => void } | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const api = `/api/automations/${encodeURIComponent(campaignId)}/flow`;
@@ -70,12 +66,7 @@ export default function FlowBuilder({ campaignId, demo = false, creation }: { ca
   const selected = definition.nodes.find((node) => node.id === selectedId);
   const selectedLinkStats = payload?.linkStats?.filter((stat) => stat.nodeId === selectedId) ?? [];
   const openingNodes = useMemo(() => findOpeningNodes(definition), [definition]);
-  const validation = useMemo(() => {
-    const result = validateFlowDefinition(definition);
-    const issues = [...result.issues];
-    if (payload?.capabilities?.initialButtons === false) for (const id of openingNodes) { const node = definition.nodes.find((item) => item.id === id); if (node?.type === "message" && (node.data.buttons.length || node.data.quickReplies?.length)) issues.push({ nodeId: id, message: "Esta conexión requiere que el primer DM sea texto sin botones. Pedí una respuesta escrita para continuar." }); }
-    return { valid: !issues.length, issues };
-  }, [definition, openingNodes, payload?.capabilities?.initialButtons]);
+  const validation = useMemo(() => validateFlowDefinition(definition), [definition]);
   const issueNodes = useMemo(() => new Set(validation.issues.flatMap((issue) => issue.nodeId ? [issue.nodeId] : [])), [validation]);
   const canEdit = demo || payload?.canEdit !== false;
 
@@ -121,15 +112,29 @@ export default function FlowBuilder({ campaignId, demo = false, creation }: { ca
   function redo() { const next = future.at(-1); if (!next || !canEdit) return; setHistory((previous) => [...previous, cloneFlow(definition)]); setFuture(future.slice(0, -1)); setDefinition(next); setCanvasEpoch((value) => value + 1); setNotice("Cambio recuperado."); setError(""); }
   function selectNode(id: string | null) {
     setSelectedId(id); setPanel("edit");
-    if (id && window.innerWidth < 900) requestAnimationFrame(() => inspector.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    if (id && viewMode === "steps" && window.innerWidth < 900) requestAnimationFrame(() => inspector.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
+  function closeStep() {
+    setSelectedId(null);
+    if (viewMode === "steps" && window.innerWidth < 900) requestAnimationFrame(() => stage.current?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" }));
+  }
+  useImperativeHandle(ref, () => ({ reviewIssues() {
+    setShowIssues(true);
+    selectNode(validation.issues.find((issue) => issue.nodeId)?.nodeId || null);
+    requestAnimationFrame(() => document.querySelector(".flow-issues")?.scrollIntoView({ behavior: "smooth", block: "nearest" }));
+  } }));
   function addNode(type: BuilderNode["type"], position?: { x: number; y: number }) {
     if (!canEdit || busy) return;
-    const result = insertNode(definition, type, picker?.at, position);
+    const result = insertNode(definition, type, picker?.at, position || picker?.position);
     change(result.definition); setPicker(null); selectNode(result.node.id);
     setNotice(picker?.at ? "Paso agregado y conectado. Personalizalo en el panel de edición." : "Paso agregado. Elegí cómo conectarlo al recorrido.");
   }
   function openPicker() {
+    if (viewMode === "map") {
+      const viewport = definition.viewport || { x: 40, y: 50, zoom: .8 };
+      setPicker({ position: { x: ((stage.current?.clientWidth || 900) / 2 - viewport.x) / viewport.zoom - 130, y: ((stage.current?.clientHeight || 600) / 2 - viewport.y) / viewport.zoom - 70 } });
+      return;
+    }
     const source = selected || definition.nodes.find((node) => node.id === definition.entryNodeId);
     const port = source && primaryPort(source);
     setPicker({ at: source && port ? { source: source.id, handle: port.id } : undefined });
@@ -198,24 +203,24 @@ export default function FlowBuilder({ campaignId, demo = false, creation }: { ca
     </header>
     {demo && <div className="flow-demo-note"><span className="flow-demo-label">MODO DEMO</span><span>Explorá, editá y probá. Tus cambios se guardan en este navegador.</span><Link href="/login">Conectar mi cuenta <span aria-hidden="true">↗</span></Link></div>}
     {!canEdit && <div className="flow-feedback text-warning">Vista de lectura. Necesitás permisos de administrador para editar o publicar.</div>}
-    <div className="flow-top-nav">{!isCreating && <nav aria-label="Secciones del flujo">{([['edit', 'Editor', 'map'], ['runs', 'Actividad', 'activity'], ['versions', 'Versiones', 'history']] as const).map(([key, label, icon]) => <button key={key} aria-current={panel === key ? "page" : undefined} className={panel === key ? "is-active" : ""} onClick={() => setPanel(key)}><FlowIcon name={icon} size={16} />{label}</button>)}</nav>}<button className={`flow-health ${validation.valid ? "is-valid" : ""}`} aria-expanded={showIssues} onClick={() => setShowIssues(!showIssues)}><FlowIcon name={validation.valid ? "check" : "warning"} size={15} />{validation.valid ? "Listo para publicar" : `${validation.issues.length} ${validation.issues.length === 1 ? "punto a revisar" : "puntos a revisar"}`}<FlowIcon name="down" size={13} /></button></div>
+    <div className="flow-top-nav">{!isCreating && <nav aria-label="Secciones del flujo">{([['edit', 'Editor', 'map'], ['runs', 'Actividad', 'activity'], ['versions', 'Versiones', 'history']] as const).map(([key, label, icon]) => <button key={key} aria-current={panel === key ? "page" : undefined} className={panel === key ? "is-active" : ""} onClick={() => setPanel(key)}><FlowIcon name={icon} size={16} />{label}</button>)}</nav>}<button className={`flow-health ${validation.valid ? "is-valid" : ""}`} aria-expanded={showIssues} onClick={() => setShowIssues(!showIssues)}><FlowIcon name={validation.valid ? "check" : "warning"} size={15} />{validation.valid ? isCreating ? "Flujo completo" : "Listo para publicar" : `${validation.issues.length} ${validation.issues.length === 1 ? "punto a revisar" : "puntos a revisar"}`}<FlowIcon name="down" size={13} /></button></div>
     {error && <div role="alert" className="flow-feedback text-error"><FlowIcon name="warning" /><span>{error}</span><button aria-label="Cerrar error" className="flow-icon-button" onClick={() => setError("")}><FlowIcon name="close" size={15} /></button></div>}
     {notice && <div role="status" className="flow-feedback text-success"><FlowIcon name="check" /><span>{notice}</span><button aria-label="Cerrar aviso" className="flow-icon-button" onClick={() => setNotice("")}><FlowIcon name="close" size={15} /></button></div>}
     {showIssues && <section className="flow-issues"><div><strong>{validation.valid ? "Tu flujo está listo" : "Un último repaso antes de publicar"}</strong><button aria-label="Cerrar revisión" className="flow-icon-button" onClick={() => setShowIssues(false)}><FlowIcon name="close" size={15} /></button></div><p>{validation.valid ? "Todos los pasos y sus conexiones están completos. Probá la conversación para revisar el resultado." : "Seleccioná un punto para ir al paso que necesita atención. Podés guardar el borrador mientras lo terminás."}</p>{validation.issues.map((issue, index) => <button key={index} className="flow-issue-row" disabled={!issue.nodeId} onClick={() => { if (issue.nodeId) selectNode(issue.nodeId); }}><FlowIcon name="warning" size={14} /><span>{issue.nodeId && <strong>{definition.nodes.find((node) => node.id === issue.nodeId)?.label}: </strong>}{issue.message}</span><FlowIcon name="arrow" size={14} /></button>)}</section>}
     {panel === "edit" && <section className="flow-editor-shell" aria-busy={busy}>
-      <div className="flow-editor-toolbar"><div className="flow-view-switch" role="group" aria-label="Vista del editor"><button aria-pressed={viewMode === "steps"} onClick={() => setViewMode("steps")}><FlowIcon name="list" size={15} />Pasos</button><button aria-pressed={viewMode === "map"} onClick={() => setViewMode("map")}><FlowIcon name="map" size={15} />Mapa</button></div><span className="flow-step-count">{definition.nodes.length} pasos</span><div className="flow-toolbar-actions"><button className="flow-icon-button" aria-label="Deshacer" title="Deshacer (Ctrl / ⌘ + Z)" disabled={!history.length || busy || !canEdit} onClick={undo}><FlowIcon name="undo" size={16} /></button><button className="flow-icon-button" aria-label="Rehacer" title="Rehacer (Ctrl / ⌘ + Shift + Z)" disabled={!future.length || busy || !canEdit} onClick={redo}><FlowIcon name="redo" size={16} /></button><button className="flow-icon-button flow-expand-button" aria-label={expanded ? "Reducir editor" : "Ampliar editor"} title={expanded ? "Reducir editor (Esc)" : "Ampliar editor"} onClick={() => setExpanded(!expanded)}><FlowIcon name={expanded ? "collapse" : "expand"} size={16} /></button><span className="flow-toolbar-divider" /><button className="flow-button flow-template-button" disabled={!canEdit || busy} onClick={() => setTemplatesOpen(true)}><FlowIcon name="template" size={15} />Plantillas</button><details className="flow-more"><summary className="flow-icon-button" aria-label="Más opciones" title="Más opciones"><FlowIcon name="more" /></summary><div><button onClick={(event) => { exportFlow(); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Exportar flujo</button><button disabled={busy || !canEdit} onClick={(event) => { uploadInput.current?.click(); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Importar flujo</button></div></details><button className="flow-button flow-button-primary" disabled={!canEdit || busy} onClick={openPicker}><FlowIcon name="plus" size={16} />Agregar paso</button></div></div>
+      <div className="flow-editor-toolbar"><div className="flow-view-switch" role="group" aria-label="Vista del editor"><button aria-pressed={viewMode === "map"} onClick={() => setViewMode("map")}><FlowIcon name="map" size={15} />Lienzo</button><button aria-pressed={viewMode === "steps"} onClick={() => setViewMode("steps")}><FlowIcon name="list" size={15} />Lista</button></div><span className="flow-step-count">{definition.nodes.length} pasos</span><div className="flow-toolbar-actions"><button className="flow-icon-button" aria-label="Deshacer" title="Deshacer (Ctrl / ⌘ + Z)" disabled={!history.length || busy || !canEdit} onClick={undo}><FlowIcon name="undo" size={16} /></button><button className="flow-icon-button" aria-label="Rehacer" title="Rehacer (Ctrl / ⌘ + Shift + Z)" disabled={!future.length || busy || !canEdit} onClick={redo}><FlowIcon name="redo" size={16} /></button><button className="flow-icon-button flow-expand-button" aria-label={expanded ? "Reducir editor" : "Ampliar editor"} title={expanded ? "Reducir editor (Esc)" : "Ampliar editor"} onClick={() => setExpanded(!expanded)}><FlowIcon name={expanded ? "collapse" : "expand"} size={16} /></button><span className="flow-toolbar-divider" /><button className="flow-button flow-template-button" disabled={!canEdit || busy} onClick={() => setTemplatesOpen(true)}><FlowIcon name="template" size={15} />Plantillas</button><details className="flow-more"><summary className="flow-icon-button" aria-label="Más opciones" title="Más opciones"><FlowIcon name="more" /></summary><div><button onClick={(event) => { exportFlow(); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Exportar flujo</button><button disabled={busy || !canEdit} onClick={(event) => { uploadInput.current?.click(); event.currentTarget.closest("details")?.removeAttribute("open"); }}>Importar flujo</button></div></details><button className="flow-button flow-button-primary" disabled={!canEdit || busy} onClick={openPicker}><FlowIcon name="plus" size={16} />Agregar paso</button></div></div>
       <input ref={uploadInput} type="file" accept="application/json,.json" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) void importFlow(file); }} />
-      <div className="flow-editor-body" inert={busy}>
-        <div className="flow-stage">{viewMode === "steps" ? <FlowJourney definition={definition} selectedId={selectedId} onSelect={selectNode} onInsert={(at) => setPicker({ at })} issueNodes={issueNodes} editable={canEdit} trigger={trigger} /> : <FlowCanvas key={`${campaignId}-${canvasEpoch}`} definition={definition} selectedId={selectedId} onSelect={selectNode} onChange={change} onCheckpoint={checkpoint} issueNodes={issueNodes} onAdd={addNode} editable={canEdit} />}</div>
-        <aside ref={inspector} className="flow-inspector" aria-label="Configuración del paso"><div className="flow-inspector-heading"><div><p className="flow-eyebrow">{selected ? "PERSONALIZÁ ESTE PASO" : "EMPEZÁ POR ACÁ"}</p><h2>{selected ? "Editar paso" : "Diseñá la conversación"}</h2></div>{selected && <button className="flow-icon-button" aria-label="Cerrar edición del paso" onClick={() => setSelectedId(null)}><FlowIcon name="close" size={18} /></button>}</div>
+      <div className={`flow-editor-body ${viewMode === "map" ? "flow-map-body" : ""}`} inert={busy}>
+        <div ref={stage} className="flow-stage">{viewMode === "steps" ? <FlowJourney definition={definition} selectedId={selectedId} onSelect={selectNode} onInsert={(at) => setPicker({ at })} issueNodes={issueNodes} editable={canEdit} trigger={trigger} /> : <FlowCanvas key={`${campaignId}-${canvasEpoch}`} definition={definition} selectedId={selectedId} onSelect={selectNode} onChange={change} onCheckpoint={checkpoint} issueNodes={issueNodes} onRequestAdd={(at, position) => setPicker({ at, position })} editable={canEdit} trigger={trigger} />}</div>
+        {(selected || viewMode === "steps") && <aside ref={inspector} className="flow-inspector" aria-label="Configuración del paso"><div className="flow-inspector-heading"><div><p className="flow-eyebrow">{selected ? "PERSONALIZÁ ESTE PASO" : "EMPEZÁ POR ACÁ"}</p><h2>{selected ? "Editar paso" : "Diseñá la conversación"}</h2></div>{selected && <button className="flow-icon-button flow-inspector-close" aria-label="Cerrar edición del paso" onClick={closeStep}><FlowIcon name="close" size={18} /><span>Volver al recorrido</span></button>}</div>
           <div className="flow-inspector-content">{selected ? <>
             {!!validation.issues.filter((issue) => issue.nodeId === selected.id).length && <div className="flow-node-issues">{validation.issues.filter((issue) => issue.nodeId === selected.id).map((issue, index) => <p key={index}><FlowIcon name="warning" size={13} />{issue.message}</p>)}</div>}
-            <fieldset disabled={!canEdit} className="min-w-0"><NodeEditor key={selected.id} node={selected} definition={definition} onChange={updateNode} onConnect={connect} onDuplicate={duplicate} onDelete={() => setConfirm({ title: `¿Eliminar “${selected.label}”?`, description: "Se quitarán este paso y sus conexiones. Podés recuperarlos con Deshacer.", action: remove })} firstMessage={openingNodes.has(selected.id)} media={payload.capabilities?.media} demo={demo} /></fieldset>
+            <fieldset disabled={!canEdit} className="min-w-0"><NodeEditor key={selected.id} node={selected} definition={definition} onChange={updateNode} onConnect={connect} onInsert={(handle) => setPicker({ at: { source: selected.id, handle } })} onDuplicate={duplicate} onDelete={() => setConfirm({ title: `¿Eliminar “${selected.label}”?`, description: "Se quitarán este paso y sus conexiones. Podés recuperarlos con Deshacer.", action: remove })} firstMessage={openingNodes.has(selected.id)} media={payload.capabilities?.media} demo={demo} /></fieldset>
             {selected.type === "start" && creation && <button className="flow-button mt-4" onClick={creation.onConfigure}>Configurar Reel y palabras<FlowIcon name="arrow" size={14} /></button>}
             {selected.type === "start" && !demo && !isCreating && <Link href={`/campaigns/${campaignId}/edit`} className="flow-button mt-4">Configurar Reel y palabras<FlowIcon name="arrow" size={14} /></Link>}
             {!isCreating && <details className="flow-advanced mt-5"><summary>Actividad de este paso</summary><div>{payload.stepStats?.filter((stat) => stat.nodeId === selected.id).length ? payload.stepStats.filter((stat) => stat.nodeId === selected.id).map((stat) => <p key={stat.status} className="text-xs text-muted">{statusLabel(stat.status)}: {stat.count}</p>) : <p className="text-xs text-muted">Todavía no hay actividad en este paso.</p>}{!!selectedLinkStats.length && <div className="mt-3 space-y-2">{selectedLinkStats.map((stat) => <div key={stat.buttonId} className="rounded-lg border border-border p-2"><p className="text-xs font-medium">{selected.type === "message" ? [...selected.data.buttons, ...(selected.data.quickReplies || [])].find((button) => button.id === stat.buttonId)?.label || stat.buttonId : stat.buttonId}</p><p className="mt-1 text-xs text-muted">{stat.clicks} clics · {stat.runsClicked} recorridos</p></div>)}</div>}</div></details>}
           </> : <div className="flow-guide"><div className="flow-guide-illustration"><FlowIcon name="message" size={28} /><span /><FlowIcon name="input" size={24} /><span /><FlowIcon name="check" size={24} /></div><h3>Un buen flujo se siente como una charla.</h3><p>Personalizá cada mensaje y decidí qué pasa después de cada respuesta.</p><ol><li><span>1</span><div><strong>Revisá cómo empieza</strong><p>{trigger}</p></div></li><li><span>2</span><div><strong>Dale tu voz a los mensajes</strong><p>Elegí un paso para editarlo. Usá el + para agregar uno en ese lugar.</p></div></li><li><span>3</span><div><strong>Probalo como tu contacto</strong><p>Recorré la conversación antes de activarla.</p></div></li></ol><button className="flow-button flow-button-wide" onClick={() => { const first = definition.nodes.find((node) => openingNodes.has(node.id)); selectNode(first?.id || definition.entryNodeId); }}>Editar primer mensaje<FlowIcon name="arrow" size={15} /></button><button className="flow-guide-link" disabled={!canEdit} onClick={() => setTemplatesOpen(true)}>Empezar con una plantilla</button><div className="flow-tip"><FlowIcon name="delay" size={17} /><p>Una respuesta de tu contacto habilita la conversación durante 24 horas.</p></div></div>}</div>
-        </aside>
+        </aside>}
       </div>
       <footer className="flow-editor-footer"><span><span className="flow-small-dot" />Instagram Direct{payload.campaign.instagramAccount?.username ? ` · @${payload.campaign.instagramAccount.username}` : ""}</span>{creation ? <button className="flow-guide-link" onClick={creation.onConfigure}>Configurar entrada ↗</button> : !demo ? <Link href={`/campaigns/${campaignId}/edit`}>Configurar entrada <span aria-hidden="true">↗</span></Link> : <span>Entorno de prueba · Sin envíos reales</span>}</footer>
     </section>}

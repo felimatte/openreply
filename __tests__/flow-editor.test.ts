@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { createNode, createTemplate } from "@/components/flows/model";
-import { flowContent, insertNode, orderedNodes } from "@/components/flows/editor-model";
+import { findOpeningNodes, flowContent, insertNode, orderedNodes } from "@/components/flows/editor-model";
 import { validateFlowDefinition } from "@/lib/flows/definition";
 import { respondSimulation, startSimulation } from "@/lib/flows/simulator";
 
 describe("guided flow editing", () => {
+  it("only marks messages before the first answer as the opening", () => {
+    const flow = createTemplate("lead");
+    const opening = flow.nodes.find((node) => node.type === "message")!;
+    const delivery = flow.nodes.find((node) => node.type === "message" && node.id !== opening.id)!;
+    expect(findOpeningNodes(flow)).toEqual(new Set([opening.id]));
+    const input = flow.nodes.find((node) => node.type === "input")!;
+    flow.edges = flow.edges.filter((edge) => edge.source !== flow.entryNodeId);
+    flow.edges.push({ id: "direct_question", source: flow.entryNodeId, sourceHandle: "next", target: input.id });
+    expect(findOpeningNodes(flow).has(delivery.id)).toBe(false);
+  });
+
   it("inserts a message without losing the existing destination or changing the original graph", () => {
     const flow = createTemplate("lead");
     const before = structuredClone(flow);

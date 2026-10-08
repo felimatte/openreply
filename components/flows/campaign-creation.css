@@ -13,5 +13,43 @@
 .flow-creation-title { font-size: 22px; font-weight: 600; letter-spacing: -.6px; }
 .flow-creation .flow-top-nav { justify-content: flex-end; padding-bottom: 10px; border-bottom: 0; }
 .flow-creation .flow-title-area .flow-eyebrow { margin-bottom: 5px; }
+.campaign-setup-overview { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.campaign-setup-overview button { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 78px; padding: 15px; border: 1px solid var(--color-border); border-radius: 11px; background: var(--color-surface); text-align: left; }
+.campaign-setup-overview button:hover { border-color: var(--color-accent); }
+.campaign-setup-overview button:focus-visible, .campaign-launch-bar button:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 3px; }
+.campaign-setup-overview button > span:nth-child(2) { flex: 1; min-width: 0; }
+.campaign-setup-overview small { display: block; color: var(--color-muted); font-size: 11px; margin-bottom: 5px; }
+.campaign-setup-overview strong { display: block; font-size: 13px; font-weight: 550; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.campaign-setup-overview button > svg { color: var(--color-muted); flex-shrink: 0; }
+.campaign-setup-icon { width: 30px; height: 30px; display: grid; place-items: center; flex-shrink: 0; border-radius: 8px; background: color-mix(in srgb, var(--color-accent) 10%, transparent); color: var(--color-accent); }
+.campaign-setup-overview .is-ready .campaign-setup-icon { color: var(--color-success); background: color-mix(in srgb, var(--color-success) 10%, transparent); }
+.campaign-account-status { display: flex; align-items: center; gap: 7px; padding-top: 12px; font-size: 12px; color: var(--color-muted); }
+.campaign-account-status svg { color: var(--color-success); }
+.campaign-account-status a { color: var(--color-accent); }
+.campaign-entry-hint { border-left: 2px solid var(--color-accent); padding-left: 10px; color: var(--color-muted); font-size: 12px; line-height: 1.6; }
+.campaign-keyword-tags { display: flex; flex-wrap: wrap; gap: 5px; padding-top: 6px; }
+.campaign-keyword-tags span { border: 1px solid var(--color-border); background: var(--color-background); padding: 4px 8px; border-radius: 6px; font-size: 11px; overflow-wrap: anywhere; }
+.campaign-keyword-tags .has-error { color: var(--color-error); border-color: var(--color-error); }
+.campaign-entry-advanced { font-size: 12px; }
+.campaign-entry-advanced > summary { display: flex; align-items: center; justify-content: space-between; cursor: pointer; min-height: 40px; color: var(--color-muted); }
+.campaign-entry-advanced > summary span { font-size: 10px; }
+.campaign-entry-done { display: flex; align-items: center; justify-content: center; gap: 10px; grid-column: 1 / -1; justify-self: end; min-height: 40px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--color-border); font-size: 12px; }
+.campaign-entry-done:hover { border-color: var(--color-accent); color: var(--color-accent); }
+.campaign-launch-bar { position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); box-shadow: 0 -8px 30px #0003; }
+.campaign-launch-status { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.campaign-launch-status > span { flex-shrink: 0; }
+.campaign-launch-status .has-pending { color: var(--color-warning); }
+.campaign-launch-status .is-ready { color: var(--color-success); }
+.campaign-launch-status strong { font-size: 12px; font-weight: 550; }
+.campaign-launch-status p { color: var(--color-muted); font-size: 11px; margin-top: 3px; }
+.campaign-launch-status > button { display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 6px; color: var(--color-accent); font-size: 11px; }
+.campaign-launch-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.campaign-launch-actions > button { display: inline-flex; justify-content: center; align-items: center; gap: 7px; min-height: 42px; border-radius: 8px; padding: 9px 14px; font-size: 12px; font-weight: 550; }
+.campaign-save-draft { border: 1px solid var(--color-border); color: var(--color-foreground); }
+.campaign-activate { color: white; background: var(--color-accent); }
+.campaign-activate:hover { background: var(--color-accent-hover); }
+.campaign-launch-actions > button:disabled { opacity: .5; cursor: wait; }
+@media (max-width: 1050px) { .campaign-launch-status p { display: none; } }
 @media (max-width: 1000px) { .campaign-entry-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .campaign-entry-controls > :first-child { grid-column: 1 / -1; } }
 @media (max-width: 600px) { .campaign-create-entry > summary { padding: 14px; gap: 10px; } .campaign-entry-controls { grid-template-columns: minmax(0, 1fr); padding: 18px; } .campaign-entry-edit { font-size: 11px; } .flow-creation .flow-header { align-items: flex-start; } }
+@media (max-width: 600px) { .campaign-setup-overview { grid-template-columns: 1fr; gap: 7px; } .campaign-setup-overview button { min-height: 60px; padding: 10px 13px; } .campaign-setup-overview small { font-size: 10px; margin-bottom: 3px; } .campaign-setup-overview strong { font-size: 12px; } .campaign-launch-bar { flex-direction: column; gap: 10px; padding: 12px; bottom: env(safe-area-inset-bottom, 0); } .campaign-launch-status { width: 100%; } .campaign-launch-status strong { font-size: 11px; } .campaign-launch-status > button { margin-left: auto; } .campaign-launch-actions { width: 100%; } .campaign-launch-actions > button { flex: 1; padding: 9px; font-size: 11px; } .campaign-entry-done { width: 100%; } }

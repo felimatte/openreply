@@ -14,14 +14,16 @@
  */
 
 import { useI18n } from "@/lib/i18n/provider";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
-import FlowBuilder from "@/components/flow-builder";
+import FlowBuilder, { type FlowBuilderHandle } from "@/components/flow-builder";
 import { createDefaultFlow, parseFlowDefinition, validateFlowDefinition, type FlowDefinition } from "@/lib/flows/definition";
+import { campaignEntryIssues } from "@/components/flows/campaign-entry";
+import FlowIcon from "@/components/flows/flow-icon";
 import "@/components/flows/campaign-creation.css";
 import { readCache, writeCache } from "@/lib/client-cache";
 import {
@@ -110,6 +112,8 @@ function Radio({
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={checked}
       onClick={onSelect}
       className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
         checked ? "border-accent bg-accent/5" : "border-border hover:border-border-hover"
@@ -130,13 +134,18 @@ function Radio({
 function Toggle({
   on,
   onToggle,
+  label,
 }: {
   on: boolean;
   onToggle: () => void;
+  label?: string;
 }) {
   return (
     <button
       type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
       onClick={onToggle}
       className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
         on ? "bg-accent" : "bg-zinc-300"
@@ -162,11 +171,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [flow, setFlow] = useState<FlowDefinition>(() => createDefaultFlow());
   const [flowEpoch, setFlowEpoch] = useState(0);
   const [entryOpen, setEntryOpen] = useState(false);
+  const entryPanel = useRef<HTMLDetailsElement>(null);
+  const flowEditor = useRef<FlowBuilderHandle>(null);
   const [visualCreation, setVisualCreation] = useState(true);
   const creatingFlow = mode === "new" && visualCreation;
 
   const [name, setName] = useState("");
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
   const [selectedAccountId, setSelectedAccountId] = useState("");
 
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
@@ -284,7 +296,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           (prev) => prev || payload.data.selectedInstagramAccountId || next[0]?.id || ""
         );
       })
-      .catch(() => setAccounts([]));
+      .catch(() => setAccounts([]))
+      .finally(() => setAccountsLoading(false));
   }, []);
 
   // Existing tags and custom fields, offered as suggestions.
@@ -451,6 +464,28 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const username =
     accounts.find((a) => a.id === selectedAccountId)?.username ?? "yourbrand";
 
+  const entryIssues = campaignEntryIssues({ accountId: selectedAccountId, scope: triggerScope, postId, matchAnyWord: matchMode === "any", keywords, excludedKeywords, priority, publicReplyEnabled, publicReplyMessages });
+  const flowValidation = useMemo(() => validateFlowDefinition(flow), [flow]);
+  const draftContentValid = useMemo(() => { try { parseFlowDefinition(flow); return true; } catch { return false; } }, [flow]);
+  const pendingCount = entryIssues.length + flowValidation.issues.length;
+
+  function configureEntry(target?: string) {
+    setEntryOpen(true);
+    requestAnimationFrame(() => {
+      const control = target ? document.getElementById(target) : entryPanel.current;
+      let ancestor = control?.closest("details");
+      while (ancestor) { ancestor.open = true; ancestor = ancestor.parentElement?.closest("details") ?? null; }
+      control?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" });
+      const focusTarget = control?.matches("input,select,button,a") ? control : control?.querySelector<HTMLElement>("input,textarea,select") || control?.querySelector<HTMLElement>("button,a");
+      (focusTarget as HTMLElement | null)?.focus({ preventScroll: true });
+    });
+  }
+
+  function reviewPending() {
+    if (entryIssues.length) configureEntry(entryIssues[0].target);
+    else flowEditor.current?.reviewIssues();
+  }
+
   function handlePostSelect(
     id: string,
     url?: string,
@@ -472,11 +507,18 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     setError(null);
 
     if (creatingFlow) {
-      // Missing entry settings should be visible immediately, without saving a
-      // placeholder campaign just to reach the conversation editor.
-      if (!selectedAccountId || (triggerScope === "specific" && !postId) || (matchMode === "specific" && !keywords.length)) setEntryOpen(true);
-      try { parseFlowDefinition(flow); } catch { return setError("Completá los textos, datos y direcciones de los pasos antes de guardar."); }
-      if (activeValue && !validateFlowDefinition(flow).valid) return setError("Revisá los puntos marcados en el flujo antes de activar la campaña. También podés guardarla como borrador.");
+      if (entryIssues.length) {
+        configureEntry(entryIssues[0].target);
+        return setError(entryIssues[0].message);
+      }
+      try { parseFlowDefinition(flow); } catch {
+        flowEditor.current?.reviewIssues();
+        return setError("Completá los campos marcados en el flujo antes de guardar.");
+      }
+      if (activeValue && !flowValidation.valid) {
+        flowEditor.current?.reviewIssues();
+        return setError("Revisá los pasos marcados antes de activar. Podés conservar las conexiones pendientes en un borrador.");
+      }
     }
 
     if (!selectedAccountId) return setError(t("Connect an Instagram account first."));
@@ -484,10 +526,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       return setError(t("Pick a post or reel to trigger the campaign."));
     if (matchMode === "specific" && keywords.length === 0)
       return setError(t("Add at least one keyword, or switch to any word."));
-    if (excludedKeywords.length > 20 || excludedKeywords.some((word) => word.length > 50))
+    if (excludedKeywords.length > 20 || excludedKeywords.some((word) => word.length > 50)) {
+      configureEntry("excluded-keywords");
       return setError("Usá hasta 20 palabras excluidas, de hasta 50 caracteres cada una.");
-    if (!Number.isInteger(priority) || priority < -100 || priority > 100)
+    }
+    if (!Number.isInteger(priority) || priority < -100 || priority > 100) {
+      configureEntry("campaign-priority");
       return setError("La prioridad debe ser un número entero entre -100 y 100.");
+    }
     if (!creatingFlow && !dmMessage.trim()) return setError(t("Add the DM with the link."));
     if (!creatingFlow && openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError(t("Your opening DM needs a message and a button label."));
@@ -735,42 +781,55 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 {t("Go Live")}
               </button>
             ))}
-          {mode === "new" && <button type="button" onClick={() => handleSubmit(false)} disabled={saving} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted hover:text-foreground disabled:opacity-50">Guardar borrador</button>}
+          {mode === "new" && !creatingFlow && <button type="button" onClick={() => handleSubmit(false)} disabled={saving} className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted hover:text-foreground disabled:opacity-50">Guardar borrador</button>}
+          {!creatingFlow &&
           <button
             type="button"
             onClick={() => handleSubmit(mode === "new" ? true : isActive)}
             disabled={saving}
             className="rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
           >
-            {saving ? t("Saving…") : creatingFlow ? "Crear y activar" : mode === "new" ? t("Go Live") : t("Save changes")}
-          </button>
+            {saving ? t("Saving…") : mode === "new" ? t("Go Live") : t("Save changes")}
+          </button>}
         </div>
       </div>
 
-      {error && <div role="alert" className="rounded-lg border border-error/20 bg-error/10 p-3 text-sm text-error">{error}</div>}
+      {error && <div role="alert" className="flex items-start gap-3 rounded-lg border border-error/20 bg-error/10 p-3 text-sm text-error"><p className="flex-1">{error}</p><button type="button" className="shrink-0 p-1" onClick={() => setError(null)} aria-label="Cerrar aviso de error"><FlowIcon name="close" size={15} /></button></div>}
+
+      {creatingFlow && <div className="campaign-setup-overview" aria-label="Preparación de la campaña">
+        {[
+          { title: "Cuenta de Instagram", value: accountsLoading ? "Cargando cuenta…" : selectedAccountId ? `@${username}` : "Conectá tu cuenta", target: "campaign-account", ready: !!selectedAccountId },
+          { title: "Publicación", value: triggerScope === "next" ? "El próximo Reel que publiques" : triggerScope === "any" ? "Cualquier publicación" : postId ? postCaption || "Reel seleccionado" : "Elegí un Reel o el próximo", target: "campaign-post", ready: triggerScope !== "specific" || !!postId },
+          { title: "Palabras que activan", value: matchMode === "any" ? "Cualquier comentario" : keywords.length ? keywords.join(", ") : "Por ejemplo: GUIA", target: "campaign-keywords", ready: !entryIssues.some((issue) => issue.target === "campaign-keywords") },
+        ].map((item) => <button key={item.target} type="button" disabled={saving} onClick={() => configureEntry(item.target)} className={item.ready ? "is-ready" : ""} aria-label={`Configurar ${item.title}: ${item.value}`}>
+          <span className="campaign-setup-icon"><FlowIcon name={item.ready ? "check" : "plus"} size={16} /></span><span><small>{item.title}</small><strong>{item.value}</strong></span><FlowIcon name="arrow" size={14} />
+        </button>)}
+      </div>}
 
       {/* min-w-0 on the cells: a grid item defaults to min-width:auto, so a
           long string widens the whole page instead of wrapping. */}
       <div className={creatingFlow ? "campaign-create-layout" : "grid gap-6 lg:grid-cols-[300px_1fr] lg:gap-8"}>
       {/* Entry settings stay alongside the unsaved conversation. */}
-      <details className={creatingFlow ? "campaign-create-entry" : undefined} open={!creatingFlow || entryOpen} inert={saving} onToggle={(event) => { if (creatingFlow) setEntryOpen(event.currentTarget.open); }}>
+      <details ref={entryPanel} className={creatingFlow ? "campaign-create-entry" : undefined} open={!creatingFlow || entryOpen} inert={saving} onToggle={(event) => { if (creatingFlow) setEntryOpen(event.currentTarget.open); }}>
         {!creatingFlow && <summary className="hidden">Configuración de campaña</summary>}
-        {creatingFlow && <summary><span className="campaign-entry-number">1</span><span className="min-w-0 flex-1"><strong>Cuándo empieza</strong><span className="campaign-entry-summary">@{username} · {triggerScope === "next" ? "Próximo Reel" : triggerScope === "any" ? "Cualquier publicación" : postId ? "Reel seleccionado" : "Elegí un Reel"} · {matchMode === "any" ? "Cualquier comentario" : keywords.length ? keywords.join(", ") : "Elegí las palabras"}</span></span><span className="campaign-entry-edit">{entryOpen ? "Cerrar" : "Configurar"} <span aria-hidden="true">⌄</span></span></summary>}
+        {creatingFlow && <summary><span className="campaign-entry-number"><FlowIcon name="start" size={16} /></span><span className="min-w-0 flex-1"><strong>Cuándo empieza</strong><span className="campaign-entry-summary">{entryIssues.length ? `${entryIssues.length} ${entryIssues.length === 1 ? "punto por completar" : "puntos por completar"}` : "Entrada lista"} · Nombre, cuenta, Reel y respuestas públicas</span></span><span className="campaign-entry-edit">{entryOpen ? "Cerrar" : "Editar"} <span aria-hidden="true">⌄</span></span></summary>}
       <div className={creatingFlow ? "campaign-entry-controls" : "space-y-8 min-w-0"}>
         <div className="space-y-3">
-          <label className="text-sm font-semibold text-foreground">
-            {t("Campaign name")}{" "}
-            <span className="font-normal text-muted">{t("(optional)")}</span>
+          <label htmlFor="campaign-name" className="text-sm font-semibold text-foreground">
+            {creatingFlow ? "Nombre de campaña" : t("Campaign name")}{" "}
+            <span className="font-normal text-muted">{creatingFlow ? "(opcional)" : t("(optional)")}</span>
           </label>
           <input
+            id="campaign-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={t("e.g. YC referral")}
+            placeholder={creatingFlow ? "Ej. Guía para mi próximo Reel" : t("e.g. YC referral")}
             className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
             maxLength={100}
           />
+          {creatingFlow && accounts.length <= 1 && <div id="campaign-account" className="campaign-account-status">{accountsLoading ? "Cargando tu cuenta…" : selectedAccountId ? <><FlowIcon name="check" size={14} /><span>Cuenta conectada: <strong>@{username}</strong></span></> : <Link href="/settings">Conectar una cuenta de Instagram ↗</Link>}</div>}
           {accounts.length > 1 && (
-            <div className="pt-2">
+            <div id="campaign-account" className="pt-2">
               <AccountSelect
                 accounts={accounts}
                 value={selectedAccountId}
@@ -787,12 +846,12 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           )}
         </div>
 
-        <Section title={t("When someone comments on")}>
+        <div id="campaign-post" role="radiogroup" aria-label="Publicación que activa la campaña"><Section title={creatingFlow ? "Cuando comentan en" : t("When someone comments on")}>
           <Radio
             checked={triggerScope === "specific"}
             onSelect={() => setTriggerScope("specific")}
           >
-            {t("a specific post or reel")}
+            {creatingFlow ? "Un Reel o publicación existente" : t("a specific post or reel")}
           </Radio>
           {triggerScope === "specific" && (
             <div className="rounded-lg border border-border p-2">
@@ -808,41 +867,46 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             checked={triggerScope === "any"}
             onSelect={() => setTriggerScope("any")}
           >
-            {t("any post or reel")}
+            {creatingFlow ? "Cualquier publicación" : t("any post or reel")}
           </Radio>
           <Radio
             checked={triggerScope === "next"}
             onSelect={() => setTriggerScope("next")}
           >
-            {t("next post or reel")}
+            {creatingFlow ? "El próximo Reel" : t("next post or reel")}
           </Radio>
-        </Section>
+          {creatingFlow && triggerScope === "next" && <p className="campaign-entry-hint">Se vincula al primer Reel que publiques después de activar esta campaña.</p>}
+        </Section></div>
 
-        <Section title={t("And this comment has")}>
+        <div id="campaign-keywords" role="group" aria-label="Palabras del comentario"><Section title={creatingFlow ? "Qué comentario activa el flujo" : t("And this comment has")}>
           <Radio
             checked={matchMode === "specific"}
             onSelect={() => setMatchMode("specific")}
           >
-            {t("a specific word or words")}
+            {creatingFlow ? "Una de estas palabras" : t("a specific word or words")}
           </Radio>
           {matchMode === "specific" && (
             <div className="space-y-1">
               <input
+                id="campaign-keyword-input"
+                aria-label="Palabras que activan la campaña"
+                aria-invalid={entryIssues.some((issue) => issue.target === "campaign-keywords") && keywordText.length > 0}
                 value={keywordText}
                 onChange={(e) => setKeywordText(e.target.value)}
-                placeholder={t("Enter a word or multiple")}
+                placeholder={creatingFlow ? "Ej. GUIA, RECURSO" : t("Enter a word or multiple")}
                 className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
               />
-              <p className="text-xs text-muted">{t("Use commas to separate words")}</p>
+              <p className="text-xs text-muted">{creatingFlow ? "Separalas con comas. Hasta 10 palabras de 50 caracteres." : t("Use commas to separate words")}</p>
+              {creatingFlow && !!keywords.length && <div className="campaign-keyword-tags">{keywords.map((word, index) => <span key={`${index}-${word}`} className={index >= 10 || word.length > 50 ? "has-error" : ""}>{word}</span>)}</div>}
             </div>
           )}
           <Radio
             checked={matchMode === "any"}
             onSelect={() => setMatchMode("any")}
           >
-            {t("any word")}
+            {creatingFlow ? "Cualquier comentario" : t("any word")}
           </Radio>
-          <div className="space-y-2 rounded-lg border border-border p-3">
+          <details className="campaign-entry-advanced"><summary>Filtros y prioridad <span>Opcional</span></summary><div className="space-y-2 rounded-lg border border-border p-3">
             <label htmlFor="excluded-keywords" className="block text-sm font-medium text-foreground">Palabras excluidas</label>
             <input id="excluded-keywords" value={excludedKeywordText} onChange={(event) => setExcludedKeywordText(event.target.value)} placeholder="ejemplo, otra palabra" aria-describedby="excluded-keywords-help" className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none" />
             <p id="excluded-keywords-help" className="text-xs text-muted">Separalas con comas. Hasta 20 palabras de 50 caracteres. Los comentarios que coincidan con alguna quedan fuera de esta campaña.</p>
@@ -850,7 +914,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             <label htmlFor="campaign-priority" className="block pt-1 text-sm font-medium text-foreground">Prioridad</label>
             <input id="campaign-priority" type="number" min={-100} max={100} step={1} value={priority} onChange={(event) => setPriority(Number(event.target.value))} aria-describedby="campaign-priority-help" className="w-28 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-accent/40 focus:outline-none" />
             <p id="campaign-priority-help" className="text-xs text-muted">De -100 a 100. Con flujos visuales, se elige la campaña coincidente de mayor prioridad.</p>
-          </div>
+          </div></details>
           {!creatingFlow && <>
           <div className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
@@ -872,15 +936,16 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           </>}
           <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5">
             <span className="text-sm text-foreground">
-              {t("reply to their comments under the post")}
+              {creatingFlow ? "Responder también al comentario público" : t("reply to their comments under the post")}
             </span>
             <Toggle
+              label="Responder también al comentario público"
               on={publicReplyEnabled}
               onToggle={() => setPublicReplyEnabled(!publicReplyEnabled)}
             />
           </div>
           {publicReplyEnabled && (
-            <div className="space-y-2">
+            <div id="campaign-public-reply" className="space-y-2">
               {publicReplyMessages.map((msg, i) => (
                 <div key={i} className="flex items-center gap-2">
                   <input
@@ -926,8 +991,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               </p>
             </div>
           )}
-        </Section>
+        </Section></div>
 
+        {creatingFlow && <button type="button" className="campaign-entry-done" onClick={() => setEntryOpen(false)}>Listo, volver al flujo <FlowIcon name="arrow" size={15} /></button>}
         {!creatingFlow && <>
         <Section title={t("They will get")}>
           <div className="rounded-lg border border-border p-3">
@@ -1239,7 +1305,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
 
       {/* Conversation is editable before the campaign exists. */}
       <div className="min-w-0">
-        {creatingFlow ? <FlowBuilder key={flowEpoch} campaignId="new-campaign" creation={{ definition: flow, onChange: setFlow, campaign: { id: "new-campaign", name: name || "Nueva campaña", isActive: false, keywords, matchAnyWord: matchMode === "any", matchAnyPost: triggerScope === "any", pendingNextReel: triggerScope === "next", postId, instagramAccount: { username } }, onConfigure: () => { setEntryOpen(true); document.querySelector(".campaign-create-entry")?.scrollIntoView({ behavior: "smooth", block: "start" }); }, onSave: () => void handleSubmit(false), saving }} /> : <>
+        {creatingFlow ? <FlowBuilder ref={flowEditor} key={flowEpoch} campaignId="new-campaign" creation={{ definition: flow, onChange: setFlow, campaign: { id: "new-campaign", name: name || "Nueva campaña", isActive: false, keywords, matchAnyWord: matchMode === "any", matchAnyPost: triggerScope === "any", pendingNextReel: triggerScope === "next", postId, instagramAccount: { username } }, onConfigure: () => configureEntry(), onSave: () => void handleSubmit(false), saving }} /> : <>
         <p className="mb-4 text-sm text-muted">{t("Preview")}</p>
         <div className="flex min-w-0 justify-center lg:sticky lg:top-6 lg:block">
           <CampaignPreview
@@ -1280,6 +1346,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         </>}
       </div>
       </div>
+      {creatingFlow && <footer className="campaign-launch-bar" aria-label="Guardar o activar la campaña">
+        <div className="campaign-launch-status">
+          <span className={pendingCount ? "has-pending" : "is-ready"}><FlowIcon name={pendingCount ? "warning" : "check"} size={17} /></span>
+          <div><strong>{pendingCount ? `${pendingCount} ${pendingCount === 1 ? "punto por completar" : "puntos por completar"}` : "Tu campaña está lista para activar"}</strong><p>{pendingCount ? entryIssues.length || !draftContentValid ? "Completá la entrada y los textos para guardar tu trabajo." : "Podés guardar un borrador y completar el recorrido después." : "Los nuevos comentarios van a iniciar esta conversación."}</p></div>
+          {pendingCount > 0 && <button type="button" disabled={saving} onClick={reviewPending}>Revisar <FlowIcon name="arrow" size={13} /></button>}
+        </div>
+        <div className="campaign-launch-actions"><button type="button" onClick={() => void handleSubmit(false)} disabled={saving} className="campaign-save-draft"><FlowIcon name="save" size={15} />Guardar borrador</button><button type="button" onClick={() => void handleSubmit(true)} disabled={saving || accountsLoading} className="campaign-activate">{saving ? "Guardando…" : "Crear y activar"}<FlowIcon name="arrow" size={15} /></button></div>
+      </footer>}
     </div>
   );
 }

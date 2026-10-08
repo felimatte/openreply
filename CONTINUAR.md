@@ -1,6 +1,6 @@
 # Continuar OpenReply en otro dispositivo
 
-Estado guardado el **4 de octubre de 2026**. Este archivo resume el trabajo para retomarlo sin depender del historial del chat.
+Estado actualizado el **8 de octubre de 2026**. Este archivo resume el trabajo para retomarlo sin depender del historial del chat.
 
 ## Proyecto y objetivo
 
@@ -13,6 +13,24 @@ Estado guardado el **4 de octubre de 2026**. Este archivo resume el trabajo para
 El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño de los flujos. Las funcionalidades existentes le resultan adecuadas. Priorizar claridad del recorrido, edición de mensajes, conexiones, pruebas y publicación, preservando el comportamiento de las automatizaciones.
 
 ## Trabajo terminado
+
+### Lienzo libre del 8 de octubre
+
+El usuario rechazó la lista fija y pidió cajas móviles como Manychat. El editor ahora abre en **Lienzo**, también al crear campañas. Permite arrastrar cajas completas, conectar/reconectar puntos por arrastre o clic, soltar una salida en el fondo para crear una caja, insertar desde una salida y editar/eliminar líneas. El inspector solo ocupa espacio al seleccionar; flota sobre el lienzo y se adapta a móvil. Zoom, desplazamiento, encuadre y deshacer/rehacer disponibles. La inserción en una posición explícita conserva las demás posiciones.
+
+Probado en navegador: movimiento con conexiones, reconexión de una rama, recuperación con Deshacer, creación desde conector y guardado demo. Móvil a 390 px sin desborde horizontal. Pruebas: 591 generales + 5 del lienzo aprobadas; 40 de persistencia omitidas sin base de pruebas. Compilación de producción, tipos y lint aprobados (dos advertencias previas). Esta entrega está preparada para producción en https://openreply-nine-delta.vercel.app/demo/flow. No requiere migraciones nuevas ni cambios en el worker.
+
+
+### Mejoras del 7 de octubre incluidas en esta entrega
+
+- Nueva campaña muestra tarjetas con el estado de cuenta, publicación y palabras, y una barra de guardado accesible al desplazarse. Revisar lleva al campo o paso pendiente; los filtros se abren automáticamente cuando contienen un error.
+- Cada botón/respuesta rápida tiene su conexión junto al texto, con creación e inserción de pasos desde el panel. Los textos distinguen continuación automática y respuesta escrita.
+- Límites de texto visibles, bloques numerados y controles para subir/bajar/quitar. En móvil se puede volver directamente al recorrido desde un paso.
+- Esta entrega cambia la interfaz y conserva el formato y el motor. Los cambios de esta fecha se incluyen en la entrega del lienzo libre del 8 de octubre.
+
+Verificación local: **591 pruebas pasaron**; 40 pruebas de persistencia se omitieron porque no se configuró una base de pruebas. Compilación de producción, tipos y lint pasaron; lint conserva las dos advertencias previas de navegación. La creación se comprobó con datos de ejemplo sin escribir campañas reales ni enviar mensajes a Instagram.
+
+### Estado publicado al 4 de octubre
 
 - Editor con vistas **Pasos** y **Mapa**, inserción de pasos en una salida concreta, panel contextual y modo ampliado.
 - Catálogo de pasos, plantillas, validaciones, diálogos y simulador de conversación renovados.
@@ -85,4 +103,4 @@ El comando del contenedor publicado ejecuta Node directamente para recibir las s
 - `docs/openreply-plan-flujos-reels.md` conserva el plan de producto; contrastarlo con lo ya implementado antes de tratar un punto como pendiente.
 - `__tests__/flow-editor.test.ts` cubre edición y conexiones; los tests de motor y persistencia están junto a él en `__tests__/`.
 
-Siguiente foco: continuar las mejoras de UX/UI con pruebas de recorridos completos en el navegador. No quedan cambios de aplicación sin guardar de la sesión anterior.
+Siguiente foco: recoger la devolución del usuario sobre el lienzo libre de cajas y pulir las interacciones. La demo está en /demo/flow y el mismo lienzo se utiliza desde /campaigns/new. La página temporal de pruebas de creación fue retirada.

@@ -88,6 +88,8 @@
 .flow-inspector { border-left: 1px solid var(--flow-line); background: #191a20; overflow-y: auto; scrollbar-color: #3c3d49 transparent; scroll-margin-top: 20px; }
 .flow-inspector-heading { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; background: #191a20f5; backdrop-filter: blur(10px); border-bottom: 1px solid #303139; padding: 19px 20px; }
 .flow-inspector-heading h2 { margin-top: 5px; font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
+.flow-inspector-close span { display: none; }
+@media (max-width: 899px) { .flow-inspector-close { width: auto; min-height: 44px; gap: 6px; padding: 6px 8px; border: 1px solid var(--flow-line); font-size: 11px; } .flow-inspector-close span { display: inline; } }
 .flow-inspector-content { padding: 20px; }
 .flow-inspector :is(input, textarea, select) { background: #121318; border-color: #373842; font-size: 13px; border-radius: 7px; padding: 10px 11px; line-height: 1.6; }
 .flow-inspector textarea { min-height: 112px; resize: vertical; }

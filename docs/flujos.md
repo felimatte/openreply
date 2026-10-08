@@ -5,11 +5,11 @@ Esta guía describe el armador visual implementado en OpenReply. Permite iniciar
 ## Crear y activar un flujo
 
 1. Entrá en **Nueva campaña**: el flujo aparece directamente, antes de crear o guardar la campaña.
-2. Abrí **Cuándo empieza** y elegí la cuenta de Instagram, el Reel, las palabras que activan la respuesta y las exclusiones. Podés usar **Próximo Reel** para prepararla antes de publicar desde Instagram. Cerrá ese panel para volver a la conversación.
-3. Personalizá el recorrido inicial o elegí una plantilla. Las plantillas reemplazan el borrador abierto. En **Pasos** ves la conversación en orden; **Mapa** muestra sus conexiones.
-4. Agregá pasos desde el catálogo o con el **+** de una salida para insertarlos en ese lugar. Seleccioná un paso para editarlo en el panel derecho.
+2. Las tarjetas de cuenta, publicación y palabras muestran qué está listo y qué falta. Tocá una tarjeta o **Cuándo empieza** para configurar la entrada. Podés usar **El próximo Reel** para prepararla antes de publicar desde Instagram. Las exclusiones están en **Filtros y prioridad**. **Listo, volver al flujo** cierra ese panel.
+3. Personalizá el recorrido inicial o elegí una plantilla. Las plantillas reemplazan el borrador abierto. El **Lienzo** es la vista principal: cada caja se puede arrastrar libremente. **Lista** permite consultar el recorrido en orden.
+4. Agregá pasos desde el catálogo o con el **+** de una salida para insertarlos en ese lugar. Seleccioná un paso para editarlo en el panel derecho. Cada botón de continuación tiene su destino en la misma tarjeta: podés elegir uno existente, **Agregar paso** o **Insertar un paso** antes del destino actual. El panel aparece al seleccionar una caja y se cierra con la cruz, también en móvil.
 5. Revisá el indicador de puntos pendientes y usá **Probar flujo** para recorrer la conversación sin enviar mensajes reales.
-6. **Guardar borrador** crea la campaña pausada con el flujo que diseñaste. **Crear y activar** guarda la campaña y su primera versión publicada en una sola operación; requiere un flujo completo.
+6. La barra de guardado permanece accesible al desplazarte. **Revisar** abre la entrada o señala los pasos pendientes. **Guardar borrador** crea la campaña pausada con el flujo que diseñaste; necesita entrada y campos válidos, aunque las conexiones pueden quedar pendientes. **Crear y activar** guarda la campaña y su primera versión publicada en una sola operación; requiere un flujo completo.
 
 Después de crearla, seguís en el mismo editor. En campañas existentes podés entrar con **Armar flujo** o **Armar flujo visual**, y guardar o publicar nuevas versiones. **Respuesta simple** permite usar el formulario anterior, necesario para campañas iniciadas por un DM. Las importaciones CSV conservan ese modo.
 
@@ -18,6 +18,16 @@ Guardar un borrador admite conexiones pendientes, pero necesita textos, campos y
 El Reel, las palabras, las exclusiones, la prioridad y la respuesta pública se configuran en la campaña. El enlace **Configurar Reel y palabras** permite volver a esa pantalla.
 
 La espera de **Próximo Reel** empieza al activar la campaña. Si estaba pausada y la volvés a activar, busca el primer Reel publicado desde esa nueva activación. Una vez vinculada, conserva el mismo Reel.
+
+## Mover y conectar cajas
+
+- Arrastrá cualquier parte de una caja para cambiar su posición. Las conexiones la acompañan; la posición visual no cambia el orden de ejecución.
+- Arrastrá el punto de salida hasta otra caja para conectarla o cambiar el destino existente. También podés tocar el punto y después la caja de destino.
+- Soltá un conector en un espacio libre para crear una caja conectada en ese lugar. El **+** de una salida inserta una caja conservando la continuación anterior.
+- Doble clic en el fondo o **Nueva caja** agrega un paso independiente. Al agregar en el lienzo, las demás cajas mantienen su posición.
+- Tocá una línea para cambiar su destino, insertar una caja o eliminar esa conexión. Deshacer/rehacer recuperan movimientos y conexiones.
+- Arrastrá el fondo para desplazarte; los controles inferiores acercan, alejan o muestran todo. Ctrl/⌘ + rueda hace zoom sobre el puntero. Con una caja enfocada, las flechas la mueven (Shift amplía el desplazamiento).
+- Guardar conserva las posiciones y el encuadre.
 
 ## Cómo empieza la conversación
 
@@ -54,6 +64,8 @@ Un mensaje admite varios bloques de texto y archivos. Los botones y las respuest
 - El texto con botones también debe tener como máximo 640 caracteres. Dividí un texto extenso en mensajes anteriores y dejá el último con los botones.
 
 Un mensaje con botones de continuación espera una elección. La salida **Continuar / respuesta escrita** define qué sucede con una respuesta que no coincide con un botón. Si no se configura y hay un único botón de continuación, una respuesta escrita puede usar ese camino. Con varios botones, la persona puede tocar uno o escribir su título.
+
+La vista de pasos distingue **Si responde con texto** de **Al enviar el mensaje**. Los mensajes posteriores sin opciones de continuación avanzan automáticamente. El panel de edición muestra los límites de texto y de espacio UTF-8 junto al campo; los emojis y acentos ocupan más espacio. Los avisos conservan el texto para que puedas corregirlo.
 
 Los botones web registran clics por recorrido y no bloquean los pasos siguientes. Para esperar una respuesta antes de avanzar, usá un botón de continuación o una pregunta.
 

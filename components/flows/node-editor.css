@@ -1,0 +1,25 @@
+.flow-node-editor .flow-field-feedback { display: block; margin-top: 6px; font-size: 11px; line-height: 1.6; }
+.flow-node-editor .flow-field-count { display: block; color: #a8a5b6; font-variant-numeric: tabular-nums; }
+.flow-node-editor .flow-field-count.is-over-limit, .flow-node-editor .flow-field-warning { color: #efc17b; }
+.flow-node-editor .flow-field-warning, .flow-node-editor .flow-field-hint { display: block; margin-top: 3px; }
+.flow-node-editor .flow-field-hint { color: #9894a7; }
+.flow-node-editor [aria-invalid="true"] { border-color: #c99a56; }
+.flow-node-editor .flow-inline-route { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.flow-node-editor .flow-route-create { align-self: flex-start; min-height: 36px; }
+.flow-node-editor .flow-message-reply .flow-inline-route { border-top: 1px solid #33343e; margin-top: 12px; padding-top: 12px; }
+.flow-node-editor .flow-block-heading, .flow-node-editor .flow-reply-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.flow-node-editor .flow-block-title { font-size: 11px; font-weight: 550; color: #bbb5c9; }
+.flow-node-editor .flow-block-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-left: auto; }
+.flow-node-editor .flow-block-control { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 36px; padding: 6px 8px; border: 1px solid #393944; border-radius: 7px; font-size: 10px; line-height: 1.4; color: #c1b9ce; }
+.flow-node-editor .flow-block-control:hover:not(:disabled) { color: #ffd1bd; border-color: #c57b60; background: #ff8b6410; }
+.flow-node-editor .flow-block-control:disabled { opacity: .35; cursor: default; }
+.flow-node-editor .flow-block-control.is-destructive { color: #ed9b9b; }
+.flow-node-editor .flow-block-up { transform: rotate(180deg); }
+.flow-node-editor .flow-message-additions { display: flex; flex-wrap: wrap; gap: 6px; }
+.flow-node-editor .flow-message-additions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 36px; }
+.flow-node-editor .flow-reply-add { min-height: 36px; }
+.flow-node-editor :is(.flow-block-control, .flow-route-create, .flow-reply-add, .flow-message-additions button):focus-visible { outline: 2px solid #ef986d; outline-offset: 3px; }
+@media (max-width: 600px) {
+  .flow-node-editor :is(.flow-block-control, .flow-route-create, .flow-reply-add, .flow-message-additions button) { min-height: 44px; }
+  .flow-node-editor .flow-block-control { font-size: 11px; padding: 8px 10px; }
+}

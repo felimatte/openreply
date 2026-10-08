@@ -3,6 +3,21 @@ import { createNode, ports, uid, type BuilderNode, type NodeKind } from "./model
 
 export type InsertionPoint = { source: string; handle: string };
 
+export function findOpeningNodes(definition: FlowDefinition): Set<string> {
+  const result = new Set<string>(), visited = new Set<string>(), pending = [definition.entryNodeId];
+  while (pending.length) {
+    const id = pending.pop()!;
+    if (visited.has(id)) continue;
+    visited.add(id);
+    const node = definition.nodes.find((item) => item.id === id);
+    if (!node) continue;
+    if (node.type === "message") { result.add(id); continue; }
+    if (node.type === "input") continue;
+    pending.push(...definition.edges.filter((edge) => edge.source === id).map((edge) => edge.target));
+  }
+  return result;
+}
+
 export function primaryPort(node: BuilderNode) {
   const outputs = ports(node);
   return outputs.find((port) => port.id === "next" || port.id === "answered") || outputs[0];
@@ -42,7 +57,7 @@ export function insertNode(flow: FlowDefinition, type: NodeKind, at?: InsertionP
   // remain explicit decisions for the author, never silently rerouted.
   const continuation = primaryPort(node);
   if (existing && continuation) edges.push({ id: uid("edge"), source: node.id, sourceHandle: continuation.id, target: existing.target });
-  const nodes = flow.nodes.map((current) => source && current.position.x > source.position.x && Math.abs(current.position.y - source.position.y) < 230 ? { ...current, position: { ...current.position, x: current.position.x + 340 } } : current);
+  const nodes = flow.nodes.map((current) => !position && source && current.position.x > source.position.x && Math.abs(current.position.y - source.position.y) < 230 ? { ...current, position: { ...current.position, x: current.position.x + 340 } } : current);
   return { definition: { ...flow, nodes: [...nodes, node], edges }, node };
 }
 

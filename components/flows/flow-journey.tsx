@@ -3,11 +3,12 @@
 import { useEffect, useRef } from "react";
 import type { FlowDefinition } from "@/lib/flows/definition";
 import { NODE_CATALOG, nodeSummary, ports } from "./model";
-import { orderedNodes, type InsertionPoint } from "./editor-model";
+import { findOpeningNodes, orderedNodes, type InsertionPoint } from "./editor-model";
 import FlowIcon from "./flow-icon";
 
 export default function FlowJourney({ definition, selectedId, onSelect, onInsert, issueNodes, editable, trigger }: { definition: FlowDefinition; selectedId: string | null; onSelect: (id: string) => void; onInsert: (point: InsertionPoint) => void; issueNodes: Set<string>; editable: boolean; trigger: string }) {
   const { nodes, connected } = orderedNodes(definition);
+  const openingNodes = findOpeningNodes(definition);
   const container = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!selectedId || !container.current) return;
@@ -30,11 +31,12 @@ export default function FlowJourney({ definition, selectedId, onSelect, onInsert
             {issueNodes.has(node.id) ? <span title="Este paso necesita revisión" className="text-warning"><FlowIcon name="warning" size={17} /></span> : <FlowIcon name="arrow" size={17} className="flow-step-arrow" />}
           </button>
           {!!outputs.length && <div className="flow-step-routes">{outputs.map((port) => {
+            const routeLabel = node.type === "message" && port.id === "next" ? openingNodes.has(node.id) || outputs.some((output) => output.id.startsWith("button.")) ? "Si responde con texto" : "Al enviar el mensaje" : port.label;
             const edge = definition.edges.find((item) => item.source === node.id && item.sourceHandle === port.id);
             const target = nodes.find((item) => item.id === edge?.target);
-            const optional = node.type === "action" && port.id === "error" && !["webhook", "start_flow"].includes(node.data.action);
+            const optional = (node.type === "action" && port.id === "error" && !["webhook", "start_flow"].includes(node.data.action)) || (node.type === "message" && port.id === "next" && outputs.some((output) => output.id.startsWith("button.")));
             if (optional && !target && selectedId !== node.id) return null;
-            return <div className="flow-route" key={port.id}><span className="flow-route-label">{port.label}</span><FlowIcon name="arrow" size={12} />{target ? <button className="flow-route-target" onClick={() => onSelect(target.id)} title={`Editar ${target.label}`}>{target.label}</button> : <button disabled={!editable} className={`flow-route-target ${optional ? "" : "text-warning"}`} onClick={() => onInsert({ source: node.id, handle: port.id })}>{optional ? "Opcional" : "Elegir próximo paso"}</button>}<button disabled={!editable} className="flow-route-add" aria-label={`Agregar paso: ${node.label} · ${port.label}`} title={target ? `Insertar antes de ${target.label}` : "Agregar y conectar un paso"} onClick={() => onInsert({ source: node.id, handle: port.id })}><FlowIcon name="plus" size={14} /></button></div>;
+            return <div className="flow-route" key={port.id}><span className="flow-route-label">{routeLabel}</span><FlowIcon name="arrow" size={12} />{target ? <button className="flow-route-target" onClick={() => onSelect(target.id)} title={`Editar ${target.label}`}>{target.label}</button> : <button disabled={!editable} className={`flow-route-target ${optional ? "" : "text-warning"}`} onClick={() => onInsert({ source: node.id, handle: port.id })}>{optional ? "Opcional" : "Elegir próximo paso"}</button>}<button disabled={!editable} className="flow-route-add" aria-label={`Agregar paso: ${node.label} · ${routeLabel}`} title={target ? `Insertar antes de ${target.label}` : "Agregar y conectar un paso"} onClick={() => onInsert({ source: node.id, handle: port.id })}><FlowIcon name="plus" size={14} /></button></div>;
           })}</div>}
         </div>
       </li>;
