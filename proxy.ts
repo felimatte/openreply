@@ -1,6 +1,16 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/automations", "/logs", "/settings"];
+const PROTECTED_PREFIXES = [
+  "/dashboard",
+  "/overview",
+  "/inbox",
+  "/campaigns",
+  "/automations",
+  "/contacts",
+  "/logs",
+  "/settings",
+  "/diagnostics",
+];
 
 function hasSessionCookie(request: NextRequest): boolean {
   return (
@@ -16,28 +26,27 @@ export function proxy(request: NextRequest) {
   const isProtected = PROTECTED_PREFIXES.some(
     (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`)
   );
-  const isLogin = pathname === "/login";
-  const isAuthenticated = hasSessionCookie(request);
-
-  if (isProtected && !isAuthenticated) {
+  if (isProtected && !hasSessionCookie(request)) {
     const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("callbackUrl", pathname);
+    loginUrl.searchParams.set("callbackUrl", pathname + request.nextUrl.search);
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isLogin && isAuthenticated) {
-    return NextResponse.redirect(new URL("/dashboard", request.url));
-  }
-
+  // A cookie may be stale. Let the dashboard layout validate the session;
+  // redirecting login based on cookie presence alone creates a redirect loop.
   return NextResponse.next();
 }
 
 export const config = {
   matcher: [
     "/dashboard/:path*",
+    "/overview/:path*",
+    "/inbox/:path*",
+    "/campaigns/:path*",
     "/automations/:path*",
+    "/contacts/:path*",
     "/logs/:path*",
     "/settings/:path*",
-    "/login",
+    "/diagnostics/:path*",
   ],
 };

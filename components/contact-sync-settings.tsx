@@ -31,7 +31,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
     fetch("/api/contacts/sync", { cache: "no-store" })
       .then((res) => res.json())
       .then((result) => {
-        if (!result.success) return;
+        if (!result.success) throw new Error(result.error ?? t("Could not load the Google Sheets settings."));
         setSync(result.data);
         setUrl(result.data.url ?? "");
       })
@@ -111,7 +111,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
     (!sync.lastSuccessAt || new Date(sync.lastErrorAt) > new Date(sync.lastSuccessAt));
 
   return (
-    <section id="google-sheets" className="panel rounded p-4 sm:p-6 space-y-4">
+    <section id="google-sheets" className="panel scroll-mt-24 space-y-5 rounded-2xl p-5 sm:p-7">
       <div>
         <h2 className="text-base font-semibold">{t("Google Sheets")}</h2>
         <p className="mt-1 text-sm text-muted">
@@ -124,7 +124,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
           {t("Ask your workspace owner or admin to connect a Google Sheet.")}
         </p>
       ) : !sync ? (
-        <div className="h-10 rounded bg-surface-hover" />
+        !error && <div aria-label={t("Loading…")} className="h-10 animate-pulse rounded-lg bg-surface-hover" />
       ) : !sync.configured ? (
         <button
           type="button"
@@ -155,7 +155,9 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
                     : t("Connected.")}
           </p>
 
-          <ol className="list-decimal space-y-4 pl-5 text-sm text-foreground">
+          <details open={!sync.url} className="rounded-xl border border-border bg-background/50 p-4">
+            <summary className="cursor-pointer text-sm font-medium text-foreground">{t("Set up")}</summary>
+          <ol className="mt-5 list-decimal space-y-5 pl-5 text-sm leading-6 text-foreground">
             <li className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>{t("Copy this script. It includes your secret key, so don't share it.")}</span>
@@ -168,6 +170,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
                 </button>
               </div>
               <textarea
+                aria-label={t("Copy script")}
                 readOnly
                 value={sync.script ?? ""}
                 rows={5}
@@ -185,6 +188,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
               <span>{t("Paste the Web app URL here:")}</span>
               <form onSubmit={saveUrl} className="flex flex-col gap-2 sm:flex-row">
                 <input
+                  aria-label={t("Paste the Web app URL here:")}
                   type="url"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
@@ -202,6 +206,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
               </form>
             </li>
           </ol>
+          </details>
 
           {sync.url && (
             <div className="flex flex-wrap gap-2 border-t border-border pt-4">
@@ -253,7 +258,7 @@ export function ContactSyncSettings({ canManage }: { canManage: boolean }) {
           {error}
         </p>
       )}
-      {notice && <p className="text-sm text-success">{notice}</p>}
+      {notice && <p role="status" className="rounded-lg bg-success/5 p-3 text-sm text-success">{notice}</p>}
     </section>
   );
 }

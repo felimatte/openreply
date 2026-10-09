@@ -7,9 +7,10 @@
  */
 
 import { useI18n } from "@/lib/i18n/provider";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import AppIcon from "@/components/app-icon";
+
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import { readCache, writeCache } from "@/lib/client-cache";
 
@@ -64,560 +65,247 @@ interface Campaign {
 }
 
 export default function CampaignsPage() {
-  const { t, label } = useI18n();
-  const router = useRouter();
+  const { t, label, locale } = useI18n();
   const [automations, setAutomations] = useState<Campaign[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
   const [loading, setLoading] = useState(true);
-  // postId -> current thumbnail URL, fetched live (Instagram URLs expire, so
-  // they are never stored on the campaign).
+  const [loadError, setLoadError] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
-  // postId -> video URL for reels, so a campaign thumbnail can play on click.
   const [videos, setVideos] = useState<Record<string, string>>({});
-  // The reel currently playing in the lightbox (null when closed).
-  const [playingVideo, setPlayingVideo] = useState<{
-    url: string;
-    postUrl: string | null;
-  } | null>(null);
+  const [playingVideo, setPlayingVideo] = useState<{ url: string; postUrl: string | null } | null>(null);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "paused">(
-    "all"
-  );
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "paused">("all");
+  const requestVersion = useRef(0);
+  const videoDialog = useRef<HTMLDialogElement>(null);
 
   const fetchAutomations = useCallback(async () => {
+    const version = ++requestVersion.current;
+    setLoading(true);
     try {
       const params = new URLSearchParams();
-      if (selectedAccountId !== "all") {
-        params.set("instagramAccountId", selectedAccountId);
-      }
-      const res = await fetch(
-        `/api/automations${params.size ? `?${params}` : ""}`,
-        { cache: "no-store" }
-      );
+      if (selectedAccountId !== "all") params.set("instagramAccountId", selectedAccountId);
+      const res = await fetch(`/api/automations${params.size ? `?${params}` : ""}`, { cache: "no-store" });
       const data = await res.json();
-      if (data.success) setAutomations(data.data);
-    } catch (err) {
-      console.error("Failed to fetch campaigns:", err);
+      if (!res.ok || !data.success) throw new Error("Campaigns unavailable");
+      if (version === requestVersion.current) {
+        setAutomations(data.data);
+        setLoadError(false);
+      }
+    } catch {
+      if (version === requestVersion.current) setLoadError(true);
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
   }, [selectedAccountId]);
 
   useEffect(() => {
-    fetch("/api/dashboard/stats")
+    const controller = new AbortController();
+    fetch("/api/dashboard/stats", { signal: controller.signal })
       .then((res) => res.json())
-      .then((payload) => {
-        if (payload.success) setAccounts(payload.data.instagramAccounts ?? []);
-      })
-      .catch(console.error);
+      .then((payload) => { if (payload.success) setAccounts(payload.data.instagramAccounts ?? []); })
+      .catch(() => {});
+    return () => controller.abort();
   }, []);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void fetchAutomations();
-    }, 0);
-    return () => window.clearTimeout(timer);
+    const timer = window.setTimeout(() => { void fetchAutomations(); }, 0);
+    return () => { window.clearTimeout(timer); requestVersion.current += 1; };
   }, [fetchAutomations]);
 
-  // Fetch fresh post thumbnails (and reel video URLs) for the accounts in view
-  // and map them by postId. Cache-first so they show instantly on a return
-  // visit. Instagram URLs expire, so they are never stored on the campaign.
+  // Instagram media URLs expire. Refresh them for just the accounts in view.
   useEffect(() => {
     if (automations.length === 0) return;
     let cancelled = false;
-    const accountIds = Array.from(
-      new Set(automations.map((a) => a.instagramAccountId))
-    ).sort();
+    const accountIds = Array.from(new Set(automations.map((campaign) => campaign.instagramAccountId))).sort();
     const cacheKey = `ig-media:${accountIds.join(",")}`;
-
-    const cached = readCache<{
-      thumbs: Record<string, string>;
-      videos: Record<string, string>;
-    }>(cacheKey, 15 * 60 * 1000);
-    // Hydrating state from cache is a legitimate effect use here.
-    /* eslint-disable react-hooks/set-state-in-effect */
-    if (cached.data) {
-      setThumbnails(cached.data.thumbs);
-      setVideos(cached.data.videos);
-    }
-    /* eslint-enable react-hooks/set-state-in-effect */
-
-    Promise.all(
-      accountIds.map((accountId) =>
-        fetch(`/api/instagram/posts?instagramAccountId=${accountId}&limit=50`)
-          .then((res) => res.json())
-          .then((payload) =>
-            payload.success
-              ? (payload.data as {
-                  id: string;
-                  media_type?: string;
-                  media_url?: string;
-                  thumbnail_url?: string;
-                }[])
-              : []
-          )
-          .catch(() => [])
-      )
-    ).then((lists) => {
-      if (cancelled) return;
-      const thumbs: Record<string, string> = {};
-      const vids: Record<string, string> = {};
-      for (const list of lists) {
-        for (const media of list) {
+    const cached = readCache<{ thumbs: Record<string, string>; videos: Record<string, string> }>(cacheKey, 15 * 60 * 1000);
+    const timer = window.setTimeout(() => {
+      if (cached?.data) { setThumbnails(cached.data.thumbs); setVideos(cached.data.videos); }
+    }, 0);
+    Promise.all(accountIds.map((accountId) => fetch(`/api/instagram/posts?instagramAccountId=${accountId}&limit=50`)
+      .then((res) => res.json())
+      .then((payload) => payload.success ? (payload.data as { id: string; media_type?: string; media_url?: string; thumbnail_url?: string }[]) : [])
+      .catch(() => []))).then((lists) => {
+        if (cancelled) return;
+        const thumbs: Record<string, string> = {};
+        const vids: Record<string, string> = {};
+        for (const list of lists) for (const media of list) {
           const url = media.thumbnail_url ?? media.media_url;
           if (url) thumbs[media.id] = url;
-          if (media.media_type === "VIDEO" && media.media_url) {
-            vids[media.id] = media.media_url;
-          }
+          if (media.media_type === "VIDEO" && media.media_url) vids[media.id] = media.media_url;
         }
-      }
-      setThumbnails(thumbs);
-      setVideos(vids);
-      writeCache(cacheKey, { thumbs, videos: vids });
-    });
-
-    return () => {
-      cancelled = true;
-    };
+        setThumbnails(thumbs); setVideos(vids);
+        writeCache(cacheKey, { thumbs, videos: vids });
+      });
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [automations]);
 
-  // Close the reel lightbox on Escape.
   useEffect(() => {
     if (!playingVideo) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setPlayingVideo(null);
+    const dialog = videoDialog.current;
+    const trigger = document.activeElement;
+    dialog?.showModal();
+    dialog?.querySelector<HTMLButtonElement>("[data-dialog-close]")?.focus();
+    return () => {
+      dialog?.close();
+      if (trigger instanceof HTMLElement) trigger.focus();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
   }, [playingVideo]);
 
-  function handleAccountChange(accountId: string) {
-    setLoading(true);
-    setSelectedAccountId(accountId);
-  }
+  useEffect(() => {
+    if (!menuOpenId) return;
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpenId(null); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menuOpenId]);
 
-  async function toggleActive(id: string, isActive: boolean) {
+  async function toggleActive(campaign: Campaign) {
+    if (busyId) return;
+    setBusyId(campaign.id); setActionError(null);
     try {
-      await fetch(`/api/automations?id=${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !isActive }),
-      });
-      setAutomations((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, isActive: !isActive } : a))
-      );
-    } catch (err) {
-      console.error("Failed to toggle:", err);
-    }
+      const res = await fetch(`/api/automations?id=${campaign.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !campaign.isActive }) });
+      const payload = await res.json();
+      if (!res.ok || !payload.success) throw new Error("Update failed");
+      setAutomations((current) => current.map((item) => item.id === campaign.id ? { ...item, isActive: !campaign.isActive } : item));
+    } catch { setActionError(t("Could not update this campaign. Please try again.")); }
+    finally { setBusyId(null); }
   }
 
-  async function copyReelUrl(auto: Campaign) {
+  async function copyReelUrl(campaign: Campaign) {
     setMenuOpenId(null);
-    if (!auto.postUrl) return;
+    if (!campaign.postUrl) return;
     try {
-      await navigator.clipboard.writeText(auto.postUrl);
-      setCopiedId(auto.id);
-      window.setTimeout(
-        () => setCopiedId((cur) => (cur === auto.id ? null : cur)),
-        1500
-      );
-    } catch (err) {
-      console.error("Failed to copy reel URL:", err);
-    }
+      await navigator.clipboard.writeText(campaign.postUrl);
+      setCopiedId(campaign.id);
+      window.setTimeout(() => setCopiedId((current) => current === campaign.id ? null : current), 2000);
+    } catch { setActionError(t("Could not copy the link. Please try again.")); }
   }
 
   async function deleteAutomation(id: string) {
-    if (!confirm(t("Delete this campaign? This cannot be undone."))) return;
+    setMenuOpenId(null);
+    if (busyId || !confirm(t("Delete this campaign? This cannot be undone."))) return;
+    setBusyId(id); setActionError(null);
     try {
-      await fetch(`/api/automations?id=${id}`, { method: "DELETE" });
-      setAutomations((prev) => prev.filter((a) => a.id !== id));
-    } catch (err) {
-      console.error("Failed to delete:", err);
-    }
+      const res = await fetch(`/api/automations?id=${id}`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok || !payload.success) throw new Error("Delete failed");
+      setAutomations((current) => current.filter((item) => item.id !== id));
+    } catch { setActionError(t("Could not delete this campaign. Please try again.")); }
+    finally { setBusyId(null); }
   }
 
-  // The copy is made server-side from the stored campaign, so settings this
-  // list never loads (the DM trigger, the follow-up, the link button label)
-  // still come along.
   async function duplicateAutomation(id: string) {
     setMenuOpenId(null);
+    if (busyId) return;
+    setBusyId(id); setActionError(null);
     try {
-      const res = await fetch(`/api/automations/duplicate?id=${id}`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (data.success) void fetchAutomations();
-      else console.error("Duplicate failed:", data.error);
-    } catch (err) {
-      console.error("Failed to duplicate:", err);
-    }
-  }
-
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        {[...Array(3)].map((_, i) => (
-          <div key={i} className="panel rounded p-6 h-36" />
-        ))}
-      </div>
-    );
+      const res = await fetch(`/api/automations/duplicate?id=${id}`, { method: "POST" });
+      const payload = await res.json();
+      if (!res.ok || !payload.success) throw new Error("Duplicate failed");
+      await fetchAutomations();
+    } catch { setActionError(t("Could not duplicate this campaign. Please try again.")); }
+    finally { setBusyId(null); }
   }
 
   const query = search.trim().toLowerCase();
-  const filtered = automations.filter((a) => {
-    if (statusFilter === "active" && !a.isActive) return false;
-    if (statusFilter === "paused" && a.isActive) return false;
-    if (!query) return true;
-    return (
-      a.name.toLowerCase().includes(query) ||
-      a.keywords.some((k) => k.toLowerCase().includes(query)) ||
-      a.dmMessage.toLowerCase().includes(query)
-    );
+  const filtered = automations.filter((campaign) => {
+    if (statusFilter === "active" && !campaign.isActive) return false;
+    if (statusFilter === "paused" && campaign.isActive) return false;
+    return !query || campaign.name.toLowerCase().includes(query) || campaign.keywords.some((keyword) => keyword.toLowerCase().includes(query)) || campaign.dmMessage.toLowerCase().includes(query);
   });
+  const activeCount = automations.filter((campaign) => campaign.isActive).length;
+  const totalSent = automations.reduce((total, campaign) => total + campaign.analytics.sent, 0);
+  const totalClicks = automations.reduce((total, campaign) => total + campaign.analytics.clicks, 0);
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-sm text-muted">
-            {filtered.length !== automations.length
-              ? t("{count} of {total} campaigns", { count: filtered.length, total: automations.length })
-              : t(automations.length === 1 ? "{count} campaign" : "{count} campaigns", { count: automations.length })}
-          </p>
+      <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("Campaigns")}</h1><p className="mt-2 text-sm text-muted">{t("Manage your campaigns and see what is working.")}</p></div>
+        <div className="flex items-center gap-2">
+          <Link href="/campaigns/import" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover sm:flex-none">{t("Import")}</Link>
+          <Link href="/campaigns/new" className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hover sm:flex-none"><AppIcon name="plus" className="h-4 w-4" />{t("New Campaign")}</Link>
         </div>
-        <div className="flex flex-wrap items-end gap-3">
-          {accounts.length > 1 && (
-            <AccountSelect
-              accounts={accounts}
-              value={selectedAccountId}
-              onChange={handleAccountChange}
-            />
-          )}
-          <Link
-            href="/campaigns/import"
-            className="flex-1 rounded border border-border px-4 py-2 text-center text-sm font-medium text-muted hover:text-foreground sm:flex-none"
-          >
-            {t("Import")}
-          </Link>
-          <Link
-            href="/campaigns/new"
-            className="flex-1 rounded bg-accent px-4 py-2 text-center text-sm font-medium text-white hover:bg-accent-hover sm:flex-none"
-          >
-            {t("New Campaign")}
-          </Link>
-        </div>
-      </div>
+      </header>
 
-      {/* Search + status filter */}
-      {automations.length > 0 && (
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder={t("Search campaigns by name, keyword, or message…")}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-          />
-          <div className="inline-flex shrink-0 rounded-lg bg-surface p-1">
-            {(["all", "active", "paused"] as const).map((s) => (
-              <button
-                key={label(s)}
-                type="button"
-                onClick={() => setStatusFilter(s)}
-                className={`rounded-md px-3 py-1.5 text-sm capitalize transition-colors ${
-                  statusFilter === s
-                    ? "bg-background font-medium text-foreground ring-1 ring-accent/40"
-                    : "text-muted hover:text-foreground"
-                }`}
-              >
-                {label(s)}
-              </button>
-            ))}
+      {(loadError || actionError) && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error"><p>{actionError ?? t("Unable to load campaigns.")}</p>{loadError && <button type="button" onClick={() => void fetchAutomations()} className="rounded-lg border border-border bg-surface px-3 py-2 font-medium text-foreground">{t("Try again")}</button>}{actionError && <button type="button" onClick={() => setActionError(null)} className="font-medium">{t("Close")}</button>}</div>}
+
+      {(!loading || automations.length > 0) && !loadError && (
+        <div className="grid grid-cols-3 gap-3 rounded-2xl border border-border bg-surface p-5 sm:gap-6 sm:p-6">
+          {[{ title: t("Active Campaigns"), value: activeCount }, { title: t("DMs Sent"), value: totalSent }, { title: t("Clicks"), value: totalClicks }].map((metric) => <div key={metric.title} className="min-w-0 border-r border-border last:border-0"><p className="text-[11px] text-muted sm:text-xs">{metric.title}</p><p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight sm:text-3xl">{metric.value.toLocaleString(locale)}</p></div>)}
+        </div>
+      )}
+
+      <section className="space-y-4" aria-busy={loading}>
+        <div className="flex flex-col justify-between gap-4 xl:flex-row xl:items-end">
+          <div className="flex gap-1 self-start rounded-xl border border-border bg-surface p-1">
+            {(["all", "active", "paused"] as const).map((status) => <button key={status} type="button" onClick={() => setStatusFilter(status)} aria-pressed={statusFilter === status} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors sm:text-sm ${statusFilter === status ? "bg-accent text-white" : "text-muted hover:bg-surface-hover hover:text-foreground"}`}>{label(status)}<span className={`rounded-md px-1.5 py-0.5 text-[10px] tabular-nums ${statusFilter === status ? "bg-white/15 text-white" : "bg-surface-hover text-muted"}`}>{status === "all" ? automations.length : status === "active" ? activeCount : automations.length - activeCount}</span></button>)}
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            {accounts.length > 1 && <AccountSelect accounts={accounts} value={selectedAccountId} onChange={(accountId) => { setLoading(true); setSelectedAccountId(accountId); }} />}
+            <div className="relative w-full sm:w-72"><svg aria-hidden="true" className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} aria-label={t("Search campaigns by name, keyword, or message…")} placeholder={t("Search campaigns by name, keyword, or message…")} className="min-h-10 w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm placeholder:text-muted" /></div>
           </div>
         </div>
-      )}
 
-      {/* Empty state */}
-      {automations.length === 0 && (
-        <div className="panel rounded p-8 text-center sm:p-12">
-          <h3 className="text-lg font-semibold mb-2">{t("No campaigns yet")}</h3>
-          <p className="text-sm text-muted mb-6 max-w-sm mx-auto">
-            {t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")}
-          </p>
-          <Link
-            href="/campaigns/new"
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded bg-accent text-sm font-semibold text-white hover:bg-accent-hover transition-colors"
-          >
-            {t("Create Campaign")}
-          </Link>
-        </div>
-      )}
-
-      {/* No matches for the current filter */}
-      {automations.length > 0 && filtered.length === 0 && (
-        <div className="panel rounded p-8 text-center text-sm text-muted">
-          {t("No campaigns match your search.")}
-        </div>
-      )}
-
-      {/* Campaign cards */}
-      <div className="space-y-3">
-        {filtered.map((auto) => {
-          const videoUrl = auto.postId ? videos[auto.postId] : undefined;
-          return (
-          <div
-            key={auto.id}
-            onClick={() => router.push(`/campaigns/${auto.id}`)}
-            className="panel rounded p-4 hover:border-border-hover transition-all cursor-pointer"
-          >
-            {/* Wraps rather than compressing: on a phone the action buttons drop
-                to their own line instead of squeezing the campaign summary. */}
-            <div className="flex flex-wrap items-start gap-x-4 gap-y-3">
-              {auto.postId && thumbnails[auto.postId] && (
-                videoUrl ? (
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setPlayingVideo({ url: videoUrl, postUrl: auto.postUrl });
-                    }}
-                    aria-label={t("Play reel preview")}
-                    className="shrink-0"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={thumbnails[auto.postId]}
-                      alt={t("Campaign reel")}
-                      className="w-12 h-12 rounded object-cover border border-border hover:border-border-hover"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  </button>
-                ) : (
-                  <a
-                    href={auto.postUrl ?? "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => e.stopPropagation()}
-                    className="shrink-0"
-                  >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={thumbnails[auto.postId]}
-                      alt={t("Campaign post")}
-                      className="w-12 h-12 rounded object-cover border border-border"
-                      onError={(e) => {
-                        e.currentTarget.style.display = "none";
-                      }}
-                    />
-                  </a>
-                )
-              )}
-              <div className="min-w-[12rem] flex-1">
-                <div className="flex flex-wrap items-center gap-2 mb-2">
-                  <h3 className="text-sm font-semibold truncate">{auto.name}</h3>
-                  <span className="shrink-0 rounded-full border border-border px-2 py-0.5 text-xs text-muted">
-                    @{auto.instagramAccount.username}
-                  </span>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                      auto.isActive
-                        ? "bg-success/10 text-success"
-                        : "bg-zinc-500/10 text-muted"
-                    }`}
-                  >
-                    {auto.isActive ? t("Active") : t("Paused")}
-                  </span>
-                  {auto.pendingNextReel && (
-                    <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-warning">
-                      {t("Waiting for next reel")}
-                    </span>
-                  )}
-                  {auto.requireFollow && (
-                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
-                      {t("Follow gate")}
-                    </span>
-                  )}
-                  {auto.trackedLinks.length >= 2 && (
-                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
-                      {t("2 links")}
-                    </span>
-                  )}
-                </div>
-
-                {/* Keywords */}
-                <div className="flex flex-wrap gap-1.5 mb-2">
-                  {auto.keywords.map((kw) => (
-                    <span
-                      key={kw}
-                      className="px-2 py-0.5 rounded-md bg-accent/10 text-accent text-xs font-medium border border-accent/10"
-                    >
-                      {kw}
-                    </span>
-                  ))}
-                </div>
-
-                {/* DM preview */}
-                <p className="text-sm text-muted truncate">&ldquo;{auto.dmMessage}{t("”")}</p>
-
-                {/* Tracked link sent */}
-                {auto.trackedLinks[0]?.trackedUrl && (
-                  <p className="mt-2 truncate font-mono text-xs text-zinc-500">
-                    {auto.trackedLinks[0].trackedUrl}
-                  </p>
-                )}
-
-                {/* Stats */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-3 text-xs text-zinc-500">
-                  <span className="font-medium text-foreground">
-                    {auto._count.dmLogs} {t("runs")}
-                  </span>
-                  <span>·</span>
-                  <span className="font-medium text-foreground">
-                    {auto.analytics.ctr}{t("% CTR")}
-                  </span>
-                  <span>·</span>
-                  <span>{auto.analytics.sent} {t("sent")}</span>
-                  <span>·</span>
-                  <span>{auto.analytics.skipped} {t("skipped")}</span>
-                  <span>·</span>
-                  <span>{auto.analytics.failed} {t("failed")}</span>
-                  <span>·</span>
-                  <span>{auto.analytics.clicks} {t("clicks")}</span>
-                </div>
-
-                {auto.analytics.topKeywords.length > 0 && (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {auto.analytics.topKeywords.map((keyword) => (
-                      <span
-                        key={keyword.keyword}
-                        className="rounded-md border border-border bg-surface px-2 py-1 text-xs text-muted"
-                      >
-                        {keyword.keyword}: {keyword.count}
-                      </span>
-                    ))}
+        {loadError ? null : loading && automations.length === 0 ? <div className="space-y-3" aria-label={t("Loading…")}>{Array.from({ length: 3 }, (_, index) => <div key={index} className="panel h-36 animate-pulse" />)}</div> : !loadError && automations.length === 0 ? <div className="panel px-6 py-16 text-center"><div aria-hidden="true" className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl border border-border bg-background text-2xl text-muted"><AppIcon name="campaign" className="h-6 w-6" /></div><h2 className="text-lg font-semibold">{t("No campaigns yet")}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">{t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")}</p><Link href="/campaigns/new" className="mt-6 inline-flex rounded-xl bg-accent px-5 py-3 text-sm font-medium text-white">{t("Create Campaign")}</Link></div> : filtered.length === 0 && !loadError ? <div className="panel px-6 py-14 text-center"><p className="text-sm text-muted">{t("No campaigns match your search.")}</p><button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium">{t("Clear filters")}</button></div> : (
+          <div inert={loading} className={`space-y-3 transition-opacity ${loading ? "opacity-50" : ""}`}>
+            <p className="px-1 text-xs text-muted" aria-live="polite">{t("{count} of {total} campaigns", { count: filtered.length, total: automations.length })}</p>
+            {filtered.map((campaign) => {
+              const thumbnail = campaign.postId ? thumbnails[campaign.postId] : undefined;
+              const videoUrl = campaign.postId ? videos[campaign.postId] : undefined;
+              const busy = busyId === campaign.id;
+              return <article key={campaign.id} className="panel relative p-5 transition-colors hover:border-border-hover sm:p-6">
+                <div className="flex items-start gap-4">
+                  <CampaignMedia thumbnail={thumbnail} videoUrl={videoUrl} postUrl={campaign.postUrl} campaignId={campaign.id} onPlay={() => videoUrl && setPlayingVideo({ url: videoUrl, postUrl: campaign.postUrl })} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><Link href={`/campaigns/${campaign.id}`} className="max-w-full break-words text-base font-semibold tracking-tight hover:underline">{campaign.name}</Link><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium ${campaign.isActive ? "bg-success/8 text-success" : "bg-surface-hover text-muted"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{campaign.isActive ? t("Active") : t("Paused")}</span></div>
+                    <p className="mt-1.5 text-xs text-muted">@{campaign.instagramAccount.username}<span className="mx-2">·</span>{campaign.matchAnyPost ? t("Any post or reel") : campaign.pendingNextReel ? t("Waiting for next reel") : t("A specific post or reel")}</p>
+                    <p className="mt-3 truncate text-sm text-muted">{campaign.dmMessage}</p>
                   </div>
-                )}
-              </div>
-
-              {/* Actions */}
-              <div
-                className="ml-auto flex items-center gap-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* Copy reel URL */}
-                {auto.postUrl && (
-                  <button
-                    onClick={() => void copyReelUrl(auto)}
-                    className="shrink-0 rounded-full border border-border px-2.5 py-1 text-xs font-medium text-muted transition-colors hover:border-border-hover hover:text-foreground"
-                  >
-                    {copiedId === auto.id ? t("Copied!") : t("Copy URL")}
-                  </button>
-                )}
-                {/* Toggle */}
-                <button
-                  onClick={() => toggleActive(auto.id, auto.isActive)}
-                  className={`
-                    relative w-11 h-6 rounded-full transition-colors
-                    ${auto.isActive ? "bg-accent" : "bg-zinc-300"}
-                  `}
-                >
-                  <span
-                    className={`
-                      absolute top-1 w-4 h-4 rounded-full bg-white transition-transform shadow-sm
-                      ${auto.isActive ? "left-6" : "left-1"}
-                    `}
-                  />
-                </button>
-
-                {/* Kebab menu */}
-                <div className="relative">
-                  <button
-                    onClick={() =>
-                      setMenuOpenId((cur) => (cur === auto.id ? null : auto.id))
-                    }
-                    aria-label={t("More actions")}
-                    className="px-2 py-1 rounded text-lg leading-none text-muted hover:text-foreground"
-                  >
-                    ⋯
-                  </button>
-                  {menuOpenId === auto.id && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-10"
-                        onClick={() => setMenuOpenId(null)}
-                      />
-                      <div className="absolute right-0 z-20 mt-1 w-36 overflow-hidden rounded-lg border border-border bg-surface shadow-lg">
-                        <button
-                          onClick={() => void duplicateAutomation(auto.id)}
-                          className="block w-full px-3 py-2 text-left text-sm text-foreground hover:bg-surface-hover"
-                        >
-                          {t("Duplicate")}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            void deleteAutomation(auto.id);
-                          }}
-                          className="block w-full px-3 py-2 text-left text-sm text-error hover:bg-surface-hover"
-                        >
-                          {t("Delete")}
-                        </button>
-                      </div>
-                    </>
-                  )}
+                  <div className="relative flex shrink-0 items-center gap-2">
+                    <button type="button" role="switch" aria-checked={campaign.isActive} aria-label={`${campaign.isActive ? t("Pause") : t("Resume")}: ${campaign.name}`} disabled={busyId !== null || loading} onClick={() => void toggleActive(campaign)} className="grid h-11 w-11 place-items-center rounded-lg disabled:opacity-40"><span aria-hidden="true" className={`relative h-6 w-10 rounded-full transition-colors ${campaign.isActive ? "bg-success" : "bg-zinc-300"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${campaign.isActive ? "left-5" : "left-1"}`} /></span></button>
+                    <button type="button" aria-label={`${t("More actions")}: ${campaign.name}`} aria-expanded={menuOpenId === campaign.id} disabled={busyId !== null || loading} onClick={() => setMenuOpenId((current) => current === campaign.id ? null : campaign.id)} className="grid h-11 w-11 place-items-center rounded-lg text-xl text-muted hover:bg-surface-hover hover:text-foreground disabled:opacity-40">⋯</button>
+                    {menuOpenId === campaign.id && <><div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} /><div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-border bg-surface p-1 shadow-lg"><Link href={`/campaigns/${campaign.id}/edit`} className="block rounded-lg px-3 py-2.5 text-sm hover:bg-surface-hover">{t("Edit")}</Link>{campaign.postUrl && <button type="button" onClick={() => void copyReelUrl(campaign)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Copy URL")}</button>}<button type="button" onClick={() => void duplicateAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Duplicate")}</button><div className="my-1 border-t border-border" /><button type="button" onClick={() => void deleteAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-error hover:bg-error/5">{t("Delete")}</button></div></>}
+                  </div>
                 </div>
-              </div>
-            </div>
+                <div className="mt-5 flex flex-col justify-between gap-4 border-t border-border pt-4 lg:flex-row lg:items-center">
+                  <div className="flex min-w-0 flex-wrap gap-1.5">{campaign.matchAnyWord ? <span className="rounded-md bg-surface-hover px-2 py-1 text-[11px] text-muted">{t("Any comment")}</span> : campaign.keywords.slice(0, 5).map((keyword) => <span key={keyword} className="max-w-40 truncate rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted">{keyword}</span>)}{campaign.keywords.length > 5 && <span className="px-1 py-1 text-[11px] text-muted">+{campaign.keywords.length - 5}</span>}{campaign.requireFollow && <span className="rounded-md bg-surface-hover px-2 py-1 text-[11px] text-muted">{t("Follow gate")}</span>}</div>
+                  <dl className="flex shrink-0 items-center gap-5 text-xs sm:gap-7">{[{ name: t("sent"), value: campaign.analytics.sent.toLocaleString(locale) }, { name: t("clicks"), value: campaign.analytics.clicks.toLocaleString(locale) }, { name: t("CTR"), value: `${campaign.analytics.ctr}%` }].map((metric) => <div key={metric.name} className="flex items-baseline gap-1.5"><dd className="font-semibold tabular-nums text-foreground">{metric.value}</dd><dt className="text-muted">{metric.name}</dt></div>)}<Link href={`/campaigns/${campaign.id}`} aria-label={`${t("Insights")}: ${campaign.name}`} className="ml-auto text-lg text-muted hover:text-foreground">→</Link></dl>
+                </div>
+                {(busy || copiedId === campaign.id) && <p role="status" className="mt-3 text-xs text-muted">{busy ? t("Loading…") : t("Copied!")}</p>}
+              </article>;
+            })}
           </div>
-          );
-        })}
-      </div>
+        )}
+      </section>
 
-      {/* Reel lightbox */}
-      {playingVideo && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setPlayingVideo(null)}
-        >
-          <div
-            className="relative flex max-w-full flex-col items-end gap-2"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-4 text-sm">
-              {playingVideo.postUrl && (
-                <a
-                  href={playingVideo.postUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-zinc-300 hover:text-white"
-                >
-                  {t("Open on Instagram")}
-                </a>
-              )}
-              <button
-                type="button"
-                onClick={() => setPlayingVideo(null)}
-                className="text-zinc-300 hover:text-white"
-              >
-                {t("Close")}
-              </button>
-            </div>
-            <video
-              src={playingVideo.url}
-              controls
-              autoPlay
-              loop
-              playsInline
-              className="max-h-[80vh] max-w-full rounded-lg"
-            />
-          </div>
-        </div>
-      )}
+      {playingVideo && <dialog ref={videoDialog} onCancel={() => setPlayingVideo(null)} onClose={() => setPlayingVideo(null)} onClick={(event) => { if (event.target === event.currentTarget) setPlayingVideo(null); }} aria-label={t("Play reel preview")} className="fixed inset-0 m-auto max-h-[94dvh] max-w-[94vw] rounded-2xl bg-surface p-4 text-foreground shadow-xl backdrop:bg-black/70"><div className="mb-3 flex items-center justify-between gap-6 text-sm">{playingVideo.postUrl && <a href={playingVideo.postUrl} target="_blank" rel="noreferrer" className="text-muted hover:text-foreground">{t("Open on Instagram")} ↗</a>}<button type="button" data-dialog-close onClick={() => setPlayingVideo(null)} className="ml-auto rounded-lg border border-border px-3 py-1.5">{t("Close")}</button></div><video src={playingVideo.url} controls autoPlay loop playsInline className="max-h-[78dvh] max-w-full rounded-lg" /></dialog>}
     </div>
   );
+}
+
+function CampaignMedia({ thumbnail, videoUrl, postUrl, campaignId, onPlay }: {
+  thumbnail?: string;
+  videoUrl?: string;
+  postUrl: string | null;
+  campaignId: string;
+  onPlay: () => void;
+}) {
+  const { t } = useI18n();
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  if (!thumbnail || thumbnail === failedUrl) return <div aria-hidden="true" className="grid h-12 w-12 shrink-0 place-items-center rounded-xl border border-border bg-background text-muted"><AppIcon name="campaign" className="h-5 w-5" /></div>;
+  const media = (
+    <>
+      {/* Instagram URLs expire and cannot use the image optimizer cache. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={thumbnail} alt={t("Campaign post")} onError={() => setFailedUrl(thumbnail)} className="h-full w-full object-cover" />
+      {videoUrl && <span className="absolute inset-0 grid place-items-center bg-black/15 text-white" aria-hidden="true">▶</span>}
+    </>
+  );
+  const className = "relative h-16 w-12 shrink-0 overflow-hidden rounded-lg bg-surface-hover sm:h-20 sm:w-16";
+  return videoUrl ? <button type="button" onClick={onPlay} aria-label={t("Play reel preview")} className={className}>{media}</button> : postUrl ? <a href={postUrl} target="_blank" rel="noreferrer" aria-label={t("Open on Instagram")} className={className}>{media}</a> : <Link href={`/campaigns/${campaignId}`} className={className}>{media}</Link>;
 }

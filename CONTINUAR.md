@@ -1,6 +1,6 @@
 # Continuar OpenReply en otro dispositivo
 
-Estado actualizado el **8 de octubre de 2026**. Este archivo resume el trabajo para retomarlo sin depender del historial del chat.
+Estado actualizado el **9 de octubre de 2026**. Este archivo resume el trabajo para retomarlo sin depender del historial del chat.
 
 ## Proyecto y objetivo
 
@@ -13,6 +13,18 @@ Estado actualizado el **8 de octubre de 2026**. Este archivo resume el trabajo p
 El pedido del usuario es seguir mejorando mucho la facilidad de uso y el diseño de los flujos. Las funcionalidades existentes le resultan adecuadas. Priorizar claridad del recorrido, edición de mensajes, conexiones, pruebas y publicación, preservando el comportamiento de las automatizaciones.
 
 ## Trabajo terminado
+
+### Rediseño integral de UX/UI
+
+La interfaz usa ahora superficies claras, grafito, bordes suaves y colores de estado sobrios. Se renovaron navegación, dashboard, campañas, métricas, bandeja, contactos, ajustes, editor de flujos, plantillas públicas y acceso. La barra lateral agrupa las secciones y permite buscar páginas/acciones con Ctrl/⌘ + K. El editor conserva el lienzo libre y agrega acceso directo a pasos con encuadre automático del seleccionado.
+
+Campañas y bandeja protegen contra respuestas atrasadas al cambiar de cuenta. Las mutaciones fallidas conservan el estado y los borradores; los errores ofrecen recuperación. Contactos tiene filtros plegables y tarjetas en móvil. El menú móvil, la búsqueda, los paneles y las vistas previas se revisaron con teclado y recuperación del foco.
+
+El rediseño se integra en `main` para publicarlo, por pedido explícito del usuario, en la aplicación habitual: `https://openreply-nine-delta.vercel.app/campaigns`. No cambia el motor, la base ni el worker; no requiere migración. Se verificaron 694 pruebas (40 de persistencia omitidas sin base de pruebas), tipos y lint; la revisión visual usó datos simulados con todas las solicitudes de la prueba interceptadas. Los archivos y capturas de comprobación están en `progress/ui-review/`. Las rutas temporales `app/ui-review` se eliminaron tras verificar. `/demo` y `/demo/flow` son vistas públicas de prueba; para usar cuentas y campañas reales hay que entrar a `/campaigns` en producción.
+
+La compilación de producción terminó correctamente con `OPENREPLY_BUILD_DIR=.next-ux-review` (la caché `.next` estaba bloqueada por Dropbox). La vista previa compilada quedó disponible en `http://localhost:3001/demo`. Se revisaron seis rutas públicas compiladas en escritorio y móvil, sin errores de navegador ni desbordes horizontales. Los agregados automáticos de caché al `tsconfig.json` se retiraron.
+
+El 9 de octubre se corrigió el acceso desde la demo a Campaigns y las demás secciones privadas: ahora se explica el inicio de sesión y se conserva la página de destino. El proxy cubre todas las secciones privadas y no redirige desde login por la mera existencia de una cookie, evitando bucles con sesiones caducadas. Pasaron 28 pruebas de navegación/i18n, lint, compilación y la comprobación en navegador del enlace, búsqueda rápida y destino con parámetros. La vista previa en el puerto 3001 usa ahora `OPENREPLY_BUILD_DIR=.next-ux-navigation`. No se inició sesión ni se enviaron correos en estas comprobaciones.
 
 ### Botón de apertura del 8 de octubre
 

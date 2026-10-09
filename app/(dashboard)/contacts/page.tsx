@@ -9,7 +9,7 @@
 
 import { useI18n } from "@/lib/i18n/provider";
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ContactAutomationControls from "@/components/contact-automation-controls";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 
@@ -65,6 +65,7 @@ export default function ContactsPage() {
   const [query, setQuery] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [hasFilter, setHasFilter] = useState("");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
   const [page, setPage] = useState(1);
@@ -72,6 +73,8 @@ export default function ContactsPage() {
   const [fields, setFields] = useState<FieldOption[]>([]);
   const [canManage, setCanManage] = useState(false);
   const [editing, setEditing] = useState<ContactRow | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
 
   const filterParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -84,22 +87,27 @@ export default function ContactsPage() {
   }, [query, tagFilter, hasFilter, accounts, selectedAccountId]);
 
   const fetchContacts = useCallback(async () => {
+    const request = ++requestRef.current;
     try {
       const params = new URLSearchParams(filterParams);
       params.set("page", String(page));
       params.set("limit", "25");
       const res = await fetch(`/api/contacts?${params}`, { cache: "no-store" });
       const data = await res.json();
+      if (request !== requestRef.current) return;
       if (data.success) {
         setContacts(data.data.contacts);
         setPagination(data.data.pagination);
+        setError(null);
+      } else {
+        setError(data.error ?? t("Could not load contacts."));
       }
-    } catch (err) {
-      console.error("Failed to fetch contacts:", err);
+    } catch {
+      if (request === requestRef.current) setError(t("Could not load contacts."));
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
-  }, [filterParams, page]);
+  }, [filterParams, page, t]);
 
   const fetchOptions = useCallback(async () => {
     try {
@@ -115,7 +123,7 @@ export default function ContactsPage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/dashboard/stats")
+    fetch("/api/instagram/accounts")
       .then((res) => res.json())
       .then((payload) => {
         if (payload.success) setAccounts(payload.data.instagramAccounts ?? []);
@@ -166,7 +174,12 @@ export default function ContactsPage() {
     const params = new URLSearchParams(filterParams);
     params.set("format", format);
     params.set("tz", Intl.DateTimeFormat().resolvedOptions().timeZone);
-    window.location.assign(`/api/contacts/export?${params}`);
+    const link = document.createElement("a");
+    link.href = `/api/contacts/export?${params}`;
+    link.download = `contacts.${format}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
   }
 
   function formatDate(value: string) {
@@ -180,22 +193,44 @@ export default function ContactsPage() {
 
   const hasFilters = Boolean(query || tagFilter || hasFilter || selectedAccountId !== "all");
   const columnCount = 6 + fields.length;
+  function clearFilters() {
+    changeFilter(() => {
+      setSearch("");
+      setQuery("");
+      setTagFilter("");
+      setHasFilter("");
+      setSelectedAccountId("all");
+    });
+  }
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex flex-1 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-3"><h1 className="text-3xl font-semibold tracking-tight">{t("Contacts")}</h1>{pagination && <span className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-medium tabular-nums text-muted">{pagination.total.toLocaleString(locale)}</span>}</div>
+          <p className="mt-2 text-sm text-muted">{t("Manage the people behind every conversation.")}</p>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" onClick={() => download("xlsx")} disabled={loading || !pagination?.total} className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-40">{t("Download Excel")} <span aria-hidden="true" className="ml-1">↓</span></button>
+          <button type="button" onClick={() => download("csv")} disabled={loading || !pagination?.total} className="rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-medium text-muted hover:text-foreground disabled:opacity-40">CSV</button>
+        </div>
+      </div>
+      <div className="panel flex flex-col gap-4 rounded-2xl p-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="grid flex-1 grid-cols-[minmax(0,1fr)_auto] items-end gap-3 sm:flex sm:flex-wrap">
           <label className="flex min-w-0 flex-1 flex-col gap-2 text-sm sm:max-w-xs">
             <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               {t("Search")}
             </span>
             <input
+              type="search"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder={t("Username, email or phone")}
               className={inputClass}
             />
           </label>
+          <button type="button" aria-expanded={filtersOpen} aria-controls="contact-filters" onClick={() => setFiltersOpen((open) => !open)} className={`rounded-lg border px-3 py-2 text-sm font-medium sm:hidden ${filtersOpen ? "border-accent bg-accent text-white" : "border-border text-muted"}`}>{t("Filters")}</button>
+          <div id="contact-filters" className={`${filtersOpen ? "grid" : "hidden"} col-span-2 grid-cols-2 gap-3 sm:contents`}>
           <label className="flex flex-col gap-2 text-sm">
             <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
               {t("Tag")}
@@ -203,7 +238,7 @@ export default function ContactsPage() {
             <select
               value={tagFilter}
               onChange={(e) => changeFilter(() => setTagFilter(e.target.value))}
-              className="min-w-40 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent/40"
+              className="w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent/40 sm:min-w-40"
             >
               <option value="">{t("All tags")}</option>
               {tags.map((tag) => (
@@ -220,7 +255,7 @@ export default function ContactsPage() {
             <select
               value={hasFilter}
               onChange={(e) => changeFilter(() => setHasFilter(e.target.value))}
-              className="min-w-40 rounded-xl border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent/40"
+              className="w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground outline-none focus:border-accent/40 sm:min-w-40"
             >
               <option value="">{t("Everyone")}</option>
               <option value="email">{t("With email")}</option>
@@ -228,29 +263,17 @@ export default function ContactsPage() {
             </select>
           </label>
           {accounts.length > 1 && (
+            <div className="col-span-2 sm:contents">
             <AccountSelect
               accounts={accounts}
               value={selectedAccountId}
               onChange={(id) => changeFilter(() => setSelectedAccountId(id))}
             />
+            </div>
           )}
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => download("xlsx")}
-            className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover"
-          >
-            {t("Download Excel")}
-          </button>
-          <button
-            type="button"
-            onClick={() => download("csv")}
-            className="rounded-lg border border-border px-4 py-2 text-sm font-medium text-muted hover:text-foreground"
-          >
-            {t("Download CSV")}
-          </button>
-        </div>
+        {hasFilters && <button type="button" onClick={clearFilters} className="shrink-0 rounded-lg px-3 py-2.5 text-xs font-medium text-muted hover:bg-surface-hover hover:text-foreground">{t("Clear filters")} ×</button>}
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted">
@@ -267,11 +290,16 @@ export default function ContactsPage() {
         </Link>
       </div>
 
-      <div className="panel rounded overflow-hidden">
-        <div className="overflow-x-auto">
+      {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error"><span>{error}</span><button onClick={() => { setLoading(true); void fetchContacts(); }} className="font-semibold underline">{t("Try again")}</button></div>}
+
+      <div className="panel overflow-hidden rounded-2xl" aria-busy={loading}>
+        <div className="divide-y divide-border md:hidden">
+          {loading ? [0,1,2,3].map((i) => <div key={i} className="animate-pulse space-y-3 p-5"><div className="h-4 w-1/2 rounded bg-surface-hover"/><div className="h-3 w-3/4 rounded bg-surface-hover"/></div>) : contacts.length === 0 ? <div className="p-8 text-center text-sm leading-6 text-muted">{hasFilters ? t("No contacts match these filters.") : t("No contacts yet. People show up here when a campaign fires for their comment, when they message you, or when they tap a campaign's button.")}</div> : contacts.map((contact) => <button key={contact.id} type="button" onClick={() => setEditing(contact)} className="block w-full p-5 text-left hover:bg-surface-hover/50"><span className="flex items-center gap-3"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-hover text-sm font-semibold" aria-hidden="true">{(contact.username ?? "?").slice(0,1).toUpperCase()}</span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold">{contactName(contact)}</span><span className="mt-1 block truncate text-xs text-muted">{contact.email || contact.phone || formatDate(contact.lastInteractionAt)}</span></span><span aria-hidden="true" className="text-muted">→</span></span>{contact.tags.length > 0 && <span className="mt-3 flex flex-wrap gap-1.5">{contact.tags.map((tag) => <span key={tag.id} className="rounded-md bg-surface-hover px-2 py-1 text-[11px] text-muted">{tag.name}</span>)}</span>}</button>)}
+        </div>
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[860px] text-sm">
             <thead>
-              <tr className="border-b border-border text-left">
+              <tr className="border-b border-border bg-background/70 text-left">
                 <th className="px-4 py-4 text-xs font-semibold uppercase tracking-wider text-muted sm:px-6">{t("Contact")}</th>
                 <th className="px-4 py-4 text-xs font-semibold uppercase tracking-wider text-muted sm:px-6">{t("Email")}</th>
                 <th className="px-4 py-4 text-xs font-semibold uppercase tracking-wider text-muted sm:px-6">{t("Phone")}</th>
@@ -310,11 +338,10 @@ export default function ContactsPage() {
                 contacts.map((contact) => (
                   <tr
                     key={contact.id}
-                    onClick={() => setEditing(contact)}
-                    className="cursor-pointer transition-colors hover:bg-surface-hover/50"
+                    className="transition-colors hover:bg-surface-hover/50"
                   >
                     <td className="px-4 py-4 sm:px-6">
-                      <span className="font-medium text-foreground">{contactName(contact)}</span>
+                      <button type="button" onClick={() => setEditing(contact)} className="flex items-center gap-3 text-left font-medium text-foreground hover:underline"><span aria-hidden="true" className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-hover text-xs text-muted">{(contact.username ?? "?").slice(0,1).toUpperCase()}</span>{contactName(contact)}</button>
                       {accounts.length > 1 && contact.instagramAccount && (
                         <span className="block text-xs text-muted">
                           {t("via @{account}", { account: contact.instagramAccount })}
@@ -364,7 +391,7 @@ export default function ContactsPage() {
             </p>
             <div className="flex items-center gap-2">
               <button
-                disabled={page <= 1}
+                disabled={loading || page <= 1}
                 onClick={() => {
                   setLoading(true);
                   setPage(page - 1);
@@ -377,7 +404,7 @@ export default function ContactsPage() {
                 {page} / {pagination.totalPages}
               </span>
               <button
-                disabled={page >= pagination.totalPages}
+                disabled={loading || page >= pagination.totalPages}
                 onClick={() => {
                   setLoading(true);
                   setPage(page + 1);
@@ -436,6 +463,18 @@ function ContactEditor({
   const [error, setError] = useState<string | null>(null);
   // Fixed when the editor opens, so rendering stays pure.
   const [openedAt] = useState(() => Date.now());
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    dialogRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      previousFocus?.focus();
+    };
+  }, []);
 
   const windowEndsAt = contact.lastInboundAt
     ? new Date(contact.lastInboundAt).getTime() + MESSAGING_WINDOW_MS
@@ -444,11 +483,22 @@ function ContactEditor({
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") onClose();
+      if (event.key === "Escape" && !busy) onClose();
+      if (event.key === "Tab") {
+        const elements = dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]');
+        if (!elements?.length) return;
+        const first = elements[0];
+        const last = elements[elements.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogRef.current)) {
+          event.preventDefault(); last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first.focus();
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, busy]);
 
   async function save() {
     setBusy(true);
@@ -498,19 +548,22 @@ function ContactEditor({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-0 sm:items-center sm:p-4"
-      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-end justify-end bg-foreground/25 backdrop-blur-[2px] sm:items-stretch"
+      onClick={() => { if (!busy) onClose(); }}
     >
       <div
         role="dialog"
+        ref={dialogRef}
+        tabIndex={-1}
         aria-modal="true"
         aria-label={contactName(contact)}
         onClick={(e) => e.stopPropagation()}
-        className="panel max-h-[92dvh] w-full max-w-lg overflow-y-auto rounded-t-2xl p-5 sm:rounded-2xl sm:p-6"
+        className="max-h-[94dvh] w-full max-w-xl overflow-y-auto rounded-t-2xl border-l border-border bg-surface p-5 shadow-2xl outline-none sm:max-h-dvh sm:rounded-none sm:p-8"
       >
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start justify-between gap-4 border-b border-border pb-5">
           <div className="min-w-0">
-            <h2 className="truncate text-base font-semibold text-foreground">{contactName(contact)}</h2>
+            <p className="mb-2 text-xs font-medium text-muted">{t("Contact")}</p>
+            <h2 className="truncate text-xl font-semibold tracking-tight text-foreground">{contactName(contact)}</h2>
             <p className="mt-1 text-xs text-muted">
               {t("First seen {date}", { date: formatDate(contact.createdAt) })}
               {contact.sourceAutomation
@@ -528,14 +581,15 @@ function ContactEditor({
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             aria-label={t("Close")}
-            className="shrink-0 px-2 text-muted hover:text-foreground"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border text-muted hover:bg-surface-hover hover:text-foreground disabled:opacity-40"
           >
             ✕
           </button>
         </div>
 
-        <div className="mt-5 space-y-4">
+        <form id="contact-editor-form" onSubmit={(event) => { event.preventDefault(); if (canManage && !busy) void save(); }} className="mt-5 space-y-4">
           <ContactAutomationControls contactId={contact.id} />
           {error && (
             <div className="rounded border border-error/20 bg-error/10 p-3 text-sm text-error">{error}</div>
@@ -593,10 +647,10 @@ function ContactEditor({
             {t("Instagram user ID: {id}", { id: contact.igsid })}
             {contact.instagramAccount ? ` · @${contact.instagramAccount}` : ""}
           </p>
-        </div>
+        </form>
 
         {canManage ? (
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="sticky -bottom-5 mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-surface py-5 sm:-bottom-8">
             <button
               type="button"
               onClick={remove}
@@ -615,8 +669,8 @@ function ContactEditor({
                 {t("Cancel")}
               </button>
               <button
-                type="button"
-                onClick={save}
+                type="submit"
+                form="contact-editor-form"
                 disabled={busy}
                 className="rounded-lg bg-accent px-5 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
               >

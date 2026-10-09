@@ -35,7 +35,7 @@
 .campaign-entry-advanced > summary span { font-size: 10px; }
 .campaign-entry-done { display: flex; align-items: center; justify-content: center; gap: 10px; grid-column: 1 / -1; justify-self: end; min-height: 40px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--color-border); font-size: 12px; }
 .campaign-entry-done:hover { border-color: var(--color-accent); color: var(--color-accent); }
-.campaign-launch-bar { position: sticky; bottom: 0; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); box-shadow: 0 -8px 30px #0003; }
+.campaign-launch-bar { position: sticky; bottom: 16px; z-index: 20; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 17px 20px; border: 1px solid var(--color-border); border-radius: 12px; background: var(--color-surface); box-shadow: 0 -4px 24px #20242a08; }
 .campaign-launch-status { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .campaign-launch-status > span { flex-shrink: 0; }
 .campaign-launch-status .has-pending { color: var(--color-warning); }
@@ -53,3 +53,25 @@
 @media (max-width: 1000px) { .campaign-entry-controls { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .campaign-entry-controls > :first-child { grid-column: 1 / -1; } }
 @media (max-width: 600px) { .campaign-create-entry > summary { padding: 14px; gap: 10px; } .campaign-entry-controls { grid-template-columns: minmax(0, 1fr); padding: 18px; } .campaign-entry-edit { font-size: 11px; } .flow-creation .flow-header { align-items: flex-start; } }
 @media (max-width: 600px) { .campaign-setup-overview { grid-template-columns: 1fr; gap: 7px; } .campaign-setup-overview button { min-height: 60px; padding: 10px 13px; } .campaign-setup-overview small { font-size: 10px; margin-bottom: 3px; } .campaign-setup-overview strong { font-size: 12px; } .campaign-launch-bar { flex-direction: column; gap: 10px; padding: 12px; bottom: env(safe-area-inset-bottom, 0); } .campaign-launch-status { width: 100%; } .campaign-launch-status strong { font-size: 11px; } .campaign-launch-status > button { margin-left: auto; } .campaign-launch-actions { width: 100%; } .campaign-launch-actions > button { flex: 1; padding: 9px; font-size: 11px; } .campaign-entry-done { width: 100%; } }
+
+.campaign-create-entry { border-radius: 14px; overflow: hidden; box-shadow: 0 2px 8px #20242a02; }
+.campaign-entry-controls { padding: 28px; gap: 30px; }
+.campaign-create-entry > summary { padding: 20px 24px; }
+.campaign-entry-number { background: #f4f6f8; border-color: #e6e8ec; color: #566474; width: 34px; height: 34px; }
+.campaign-entry-edit { display: inline-flex; align-items: center; gap: 6px; color: #596778; border: 1px solid #e6e8ec; border-radius: 7px; padding: 6px 10px; }
+.campaign-setup-overview button { min-height: 86px; padding: 18px; border-radius: 13px; transition: border-color .15s, box-shadow .15s; }
+.campaign-setup-overview button:hover { border-color: #b5bfc9; box-shadow: 0 3px 10px #20242a05; }
+.campaign-setup-icon { width: 34px; height: 34px; background: #f1f3f6; color: #5d6b7b; border-radius: 10px; }
+.campaign-setup-overview .is-ready .campaign-setup-icon { background: #eef5f0; color: #4b7659; }
+.campaign-launch-bar { border-radius: 14px; padding: 18px 22px; background: #fffffff7; backdrop-filter: blur(12px); }
+.campaign-launch-status strong { font-size: 13px; }
+.campaign-launch-status p { font-size: 12px; }
+.campaign-launch-actions > button { min-height: 44px; border-radius: 9px; }
+.campaign-save-draft:hover { background: #f4f6f8; }
+.campaign-loading { padding: 30px; border: 1px solid var(--color-border); border-radius: 16px; background: var(--color-surface); }
+.campaign-loading p { color: var(--color-muted); margin-bottom: 24px; font-size: 13px; }
+.campaign-loading-lines { display: grid; gap: 14px; }
+.campaign-loading-lines span { display: block; height: 14px; border-radius: 5px; background: var(--color-background); }
+.campaign-loading-lines span:nth-child(2) { width: 70%; }
+.campaign-loading-lines span:nth-child(3) { width: 45%; }
+@media (max-width: 600px) { .campaign-create-entry > summary { padding: 16px; } .campaign-entry-controls { padding: 20px; gap: 24px; } .campaign-setup-overview button { min-height: 68px; padding: 13px 16px; } .campaign-launch-bar { bottom: max(8px, env(safe-area-inset-bottom)); padding: 14px; } }

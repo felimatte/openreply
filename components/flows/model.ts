@@ -13,14 +13,14 @@ export type ActionData = { action: "add_tag" | "remove_tag" | "set_field" | "cle
 export type RandomizerData = { branches: { id: string; label: string; weight: number }[] };
 
 export const NODE_CATALOG: { type: NodeKind; title: string; description: string; icon: string; color: string }[] = [
-  { type: "start", title: "Comentario de Reel", description: "Entrada desde tu campaña", icon: "↳", color: "#ff7a4a" },
-  { type: "message", title: "Mensaje", description: "Texto, archivos y botones", icon: "☏", color: "#9a75ff" },
-  { type: "input", title: "Pedir un dato", description: "Email, teléfono o respuesta", icon: "?", color: "#ff3e92" },
-  { type: "condition", title: "Condición", description: "Elegir un camino según datos", icon: "◇", color: "#ffd166" },
-  { type: "delay", title: "Espera", description: "Continuar después de un tiempo", icon: "◷", color: "#66d3dd" },
-  { type: "action", title: "Acción", description: "Etiquetas, campos e integraciones", icon: "⚡", color: "#a2e79a" },
-  { type: "randomizer", title: "Repartir caminos", description: "Distribuir contactos por porcentaje", icon: "⑂", color: "#ff9869" },
-  { type: "end", title: "Finalizar", description: "Terminar este recorrido", icon: "■", color: "#b6a5b2" },
+  { type: "start", title: "Comentario de Reel", description: "Entrada desde tu campaña", icon: "↳", color: "#4c5e57" },
+  { type: "message", title: "Mensaje", description: "Texto, archivos y botones", icon: "☏", color: "#485363" },
+  { type: "input", title: "Pedir un dato", description: "Email, teléfono o respuesta", icon: "?", color: "#6a5f55" },
+  { type: "condition", title: "Condición", description: "Elegir un camino según datos", icon: "◇", color: "#8b744f" },
+  { type: "delay", title: "Espera", description: "Continuar después de un tiempo", icon: "◷", color: "#557478" },
+  { type: "action", title: "Acción", description: "Etiquetas, campos e integraciones", icon: "⚡", color: "#51785f" },
+  { type: "randomizer", title: "Repartir caminos", description: "Distribuir contactos por porcentaje", icon: "⑂", color: "#73705e" },
+  { type: "end", title: "Finalizar", description: "Terminar este recorrido", icon: "■", color: "#727883" },
 ];
 
 export const ACTION_LABELS: Record<ActionData["action"], string> = {

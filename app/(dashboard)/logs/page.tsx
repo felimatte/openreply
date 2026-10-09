@@ -7,7 +7,7 @@
  */
 
 import { useI18n } from "@/lib/i18n/provider";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import StatusBadge from "@/components/status-badge";
 
@@ -49,8 +49,11 @@ export default function LogsPage() {
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
   const [page, setPage] = useState(1);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
 
   const fetchLogs = useCallback(async () => {
+    const request = ++requestRef.current;
     try {
       const params = new URLSearchParams({ page: String(page), limit: "20" });
       if (statusFilter !== "ALL") params.set("status", statusFilter);
@@ -60,19 +63,23 @@ export default function LogsPage() {
 
       const res = await fetch(`/api/logs?${params}`);
       const data = await res.json();
+      if (request !== requestRef.current) return;
       if (data.success) {
         setLogs(data.data.logs);
         setPagination(data.data.pagination);
+        setError(null);
+      } else {
+        setError(data.error ?? t("Could not load activity."));
       }
-    } catch (err) {
-      console.error("Failed to fetch logs:", err);
+    } catch {
+      if (request === requestRef.current) setError(t("Could not load activity."));
     } finally {
-      setLoading(false);
+      if (request === requestRef.current) setLoading(false);
     }
-  }, [page, statusFilter, selectedAccountId]);
+  }, [page, statusFilter, selectedAccountId, t]);
 
   useEffect(() => {
-    fetch("/api/dashboard/stats")
+    fetch("/api/instagram/accounts")
       .then((res) => res.json())
       .then((payload) => {
         if (payload.success) setAccounts(payload.data.instagramAccounts ?? []);
@@ -88,6 +95,7 @@ export default function LogsPage() {
   }, [fetchLogs]);
 
   function handleFilterChange(status: string) {
+    if (status === statusFilter) return;
     setLoading(true);
     setStatusFilter(status);
     setPage(1);
@@ -101,19 +109,24 @@ export default function LogsPage() {
 
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div><h1 className="text-3xl font-semibold tracking-tight">{t("DM Logs")}</h1><p className="mt-2 text-sm text-muted">{t("Track every reply and understand what happened.")}</p></div>
+        <button type="button" disabled={loading} onClick={() => { setLoading(true); void fetchLogs(); }} className="rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-medium text-foreground hover:bg-surface-hover disabled:opacity-40">{loading ? t("Loading…") : t("Refresh")}</button>
+      </div>
       {/* Filters */}
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="flex flex-wrap gap-2">
+      <div className="panel flex flex-col gap-4 rounded-2xl p-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="flex flex-wrap gap-1.5">
           {STATUS_FILTERS.map((status) => (
             <button
               key={status}
               onClick={() => handleFilterChange(status)}
+              aria-pressed={statusFilter === status}
               className={`
-                px-3 py-1.5 rounded-lg text-xs font-medium transition-all
+                px-3 py-2.5 rounded-lg text-xs font-medium transition-colors
                 ${
                   statusFilter === status
-                    ? "bg-accent/15 text-accent border border-accent/20"
-                    : "bg-surface text-muted border border-border hover:border-border-hover hover:text-foreground"
+                    ? "bg-accent text-white"
+                    : "text-muted hover:bg-surface-hover hover:text-foreground"
                 }
               `}
             >
@@ -130,14 +143,19 @@ export default function LogsPage() {
         )}
       </div>
 
+      {error && <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error"><span>{error}</span><button onClick={() => { setLoading(true); void fetchLogs(); }} className="font-semibold underline">{t("Try again")}</button></div>}
+
       {/* Table */}
-      <div className="panel rounded overflow-hidden">
+      <div className="panel overflow-hidden rounded-2xl" aria-busy={loading}>
+        <div className="divide-y divide-border md:hidden">
+          {loading ? [0,1,2,3].map((i) => <div key={i} className="animate-pulse space-y-3 p-5"><div className="h-4 w-1/2 rounded bg-surface-hover"/><div className="h-3 w-3/4 rounded bg-surface-hover"/></div>) : logs.length === 0 ? <p className="p-10 text-center text-sm text-muted">{t("No logs found")}</p> : logs.map((log) => <article key={log.id} className="space-y-3 p-5"><div className="flex items-center justify-between gap-3"><p className="min-w-0 truncate text-sm font-semibold">@{log.commenterName ?? log.commenterId.slice(0,8)}</p><StatusBadge status={log.status}/></div><p className="break-words text-sm leading-6 text-muted">{log.commentText}</p><div className="flex flex-wrap justify-between gap-2 text-xs text-muted"><span>{log.automation.name} · @{log.instagramAccount.username}</span><time dateTime={log.createdAt}>{new Date(log.createdAt).toLocaleString(locale, {month:"short",day:"numeric",hour:"2-digit",minute:"2-digit"})}</time></div>{log.errorMessage && <p className="rounded-lg bg-error/5 p-3 text-xs leading-5 text-error">{log.errorMessage}</p>}</article>)}
+        </div>
         {/* Six columns don't fit a phone; the table keeps its width and scrolls
             horizontally inside the panel rather than crushing every cell. */}
-        <div className="overflow-x-auto">
+        <div className="hidden overflow-x-auto md:block">
           <table className="w-full min-w-[760px] text-sm">
             <thead>
-              <tr className="border-b border-border text-left">
+              <tr className="border-b border-border bg-background/70 text-left">
                 <th className="px-4 py-4 text-xs font-semibold text-muted uppercase tracking-wider sm:px-6">{t("Commenter")}</th>
                 <th className="px-4 py-4 text-xs font-semibold text-muted uppercase tracking-wider sm:px-6">{t("Comment")}</th>
                 <th className="px-4 py-4 text-xs font-semibold text-muted uppercase tracking-wider sm:px-6">{t("Campaign")}</th>
@@ -174,7 +192,7 @@ export default function LogsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-4 max-w-[200px] sm:px-6">
-                      <span className="text-muted truncate block">{log.commentText}</span>
+                      <details className="group"><summary className="cursor-pointer list-none truncate text-muted group-open:whitespace-normal group-open:break-words">{log.commentText}</summary></details>
                     </td>
                     <td className="px-4 py-4 sm:px-6">
                       <span className="text-muted">{log.automation.name}</span>
@@ -184,6 +202,7 @@ export default function LogsPage() {
                     </td>
                     <td className="px-4 py-4 sm:px-6">
                       <StatusBadge status={log.status} />
+                      {log.errorMessage && <details className="mt-2 max-w-xs text-xs text-error"><summary className="cursor-pointer">{t("Status")}</summary><p className="mt-2 break-words leading-5">{log.errorMessage}</p></details>}
                     </td>
                     <td className="px-4 py-4 text-muted whitespace-nowrap sm:px-6">
                       {new Date(log.createdAt).toLocaleString(locale, {
@@ -211,7 +230,7 @@ export default function LogsPage() {
             </p>
             <div className="flex items-center gap-2">
               <button
-                disabled={page <= 1}
+                disabled={loading || page <= 1}
                 onClick={() => {
                   setLoading(true);
                   setPage(page - 1);
@@ -224,7 +243,7 @@ export default function LogsPage() {
                 {page} / {pagination.totalPages}
               </span>
               <button
-                disabled={page >= pagination.totalPages}
+                disabled={loading || page >= pagination.totalPages}
                 onClick={() => {
                   setLoading(true);
                   setPage(page + 1);

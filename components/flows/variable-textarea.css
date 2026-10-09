@@ -1,18 +1,18 @@
 .flow-variable-field { min-width: 0; }
-.flow-variable-tools { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 5px; font-size: 10px; color: #a8a5b6; }
-.flow-variable-tools button { color: #ffbda0; border-radius: 5px; padding: 6px; font-size: 11px; }
-.flow-variable-tools button:hover { background: #ff8b6415; }
-.flow-variable-tools button:focus-visible { outline: 2px solid #ef986d; outline-offset: 2px; }
-.flow-variable-picker { margin-top: 8px; border: 1px solid #51444b; border-radius: 10px; background: #1c1b24; overflow: hidden; box-shadow: 0 8px 24px #0003; }
-.flow-variable-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px; color: #ded7e4; font-size: 11px; font-weight: 600; }
-.flow-variable-heading small { font-size: 10px; color: #9b94a6; white-space: nowrap; font-weight: 400; }
+.flow-variable-tools { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 8px; margin-top: 5px; font-size: 11px; color: #6b7280; }
+.flow-variable-tools button { color: #6b7280; border-radius: 5px; padding: 6px; font-size: 11px; }
+.flow-variable-tools button:hover { background: #f7f8fa; }
+.flow-variable-tools button:focus-visible { outline: 2px solid #657487; outline-offset: 2px; }
+.flow-variable-picker { margin-top: 8px; border: 1px solid #e6e8ec; border-radius: 10px; background: #ffffff; overflow: hidden; box-shadow: 0 8px 24px #20242a0a; }
+.flow-variable-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px; color: #6b7280; font-size: 11px; font-weight: 600; }
+.flow-variable-heading small { font-size: 11px; color: #6b7280; white-space: nowrap; font-weight: 400; }
 .flow-variable-options { max-height: 230px; overflow-y: auto; overscroll-behavior: contain; }
-.flow-variable-options button { display: block; width: 100%; text-align: left; padding: 10px; border-top: 1px solid #33313e; }
-.flow-variable-options button[aria-selected="true"] { background: #ff906119; box-shadow: inset 3px 0 #f09970; }
+.flow-variable-options button { display: block; width: 100%; text-align: left; padding: 10px; border-top: 1px solid #e6e8ec; }
+.flow-variable-options button[aria-selected="true"] { background: #edf1f5; box-shadow: inset 3px 0 #64748b; }
 .flow-variable-title { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
-.flow-variable-title strong { font-size: 12px; color: #f4eaf5; font-weight: 550; overflow-wrap: anywhere; }
-.flow-variable-title small { font-size: 9px; color: #d1b5a9; border: 1px solid #574742; border-radius: 4px; padding: 1px 5px; }
-.flow-variable-description { display: block; margin-top: 4px; font-size: 10px; line-height: 1.5; color: #aaa3b5; overflow-wrap: anywhere; }
-.flow-variable-footnote, .flow-variable-empty { padding: 9px 10px; font-size: 10px; line-height: 1.5; color: #a8a1b3; }
-.flow-variable-footnote { border-top: 1px solid #33313e; }
+.flow-variable-title strong { font-size: 12px; color: #20242a; font-weight: 550; overflow-wrap: anywhere; }
+.flow-variable-title small { font-size: 11px; color: #6b7280; border: 1px solid #e6e8ec; border-radius: 4px; padding: 1px 5px; }
+.flow-variable-description { display: block; margin-top: 4px; font-size: 11px; line-height: 1.5; color: #6b7280; overflow-wrap: anywhere; }
+.flow-variable-footnote, .flow-variable-empty { padding: 9px 10px; font-size: 11px; line-height: 1.5; color: #6b7280; }
+.flow-variable-footnote { border-top: 1px solid #e6e8ec; }
 @media (max-width: 600px) { .flow-variable-tools button { min-height: 40px; } }

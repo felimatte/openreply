@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
+import StatCard from "@/components/stat-card";
 
 interface Campaign {
   id: string;
@@ -71,19 +72,26 @@ export default function CampaignDetailPage() {
   const [tab, setTab] = useState<Tab>("insights");
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
   useEffect(() => {
-    fetch("/api/automations", { cache: "no-store" })
+    const controller = new AbortController();
+    fetch("/api/automations", { cache: "no-store", signal: controller.signal })
       .then((r) => r.json())
       .then((payload) => {
-        if (!payload.success) return setNotFound(true);
+        if (controller.signal.aborted) return;
+        if (!payload.success) throw new Error("Campaign unavailable");
         const found = (payload.data as Campaign[]).find((c) => c.id === id);
         if (!found) return setNotFound(true);
         setCampaign(found);
+        setError(null);
+        setNotFound(false);
       })
-      .catch(() => setNotFound(true))
-      .finally(() => setLoading(false));
-  }, [id]);
+      .catch(() => { if (!controller.signal.aborted) setError(t("Unable to load campaigns.")); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [id, retry, t]);
 
   useEffect(() => {
     if (!campaign) return;
@@ -114,23 +122,29 @@ export default function CampaignDetailPage() {
   }, [campaign]);
 
   async function toggleActive() {
-    if (!campaign) return;
+    if (!campaign || busy) return;
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/automations?id=${campaign.id}`, {
+      const response = await fetch(`/api/automations?id=${campaign.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !campaign.isActive }),
       });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error("Update failed");
       setCampaign({ ...campaign, isActive: !campaign.isActive });
+    } catch {
+      setError(t("Could not update this campaign. Please try again."));
     } finally {
       setBusy(false);
     }
   }
 
   if (loading) {
-    return <div className="panel h-64 rounded" />;
+    return <div className="panel h-64 animate-pulse" aria-label={t("Loading…")} aria-busy="true" />;
   }
+  if (error && !campaign) return <div role="alert" className="panel p-8 text-center"><p className="text-sm text-error">{error}</p><button type="button" onClick={() => { setLoading(true); setRetry((value) => value + 1); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium">{t("Try again")}</button></div>;
   if (notFound || !campaign) {
     return (
       <div className="panel rounded p-8 text-center">
@@ -171,30 +185,15 @@ export default function CampaignDetailPage() {
   ];
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,340px)_1fr]">
-      {/* Left: config summary */}
-      <div className="space-y-6">
-        <div className="flex items-center gap-2">
-          <Link
-            href="/campaigns"
-            className="text-sm text-muted hover:text-foreground"
-          >
-            {t("← Campaigns")}
-          </Link>
-        </div>
-        <div className="flex items-center gap-2">
-          <h1 className="truncate text-lg font-semibold">{campaign.name}</h1>
-          <span
-            className={`shrink-0 rounded px-2 py-0.5 text-xs font-semibold ${
-              campaign.isActive
-                ? "bg-success/10 text-success"
-                : "bg-zinc-500/10 text-muted"
-            }`}
-          >
-            {campaign.isActive ? t("LIVE") : t("Paused")}
-          </span>
-        </div>
-
+    <div className="space-y-6">
+      <Link href="/campaigns" className="inline-flex text-xs font-medium text-muted hover:text-foreground">{t("← Campaigns")}</Link>
+      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+        <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{campaign.name}</h1><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${campaign.isActive ? "bg-success/10 text-success" : "bg-surface-hover text-muted"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />{campaign.isActive ? t("Active") : t("Paused")}</span></div><p className="mt-2 text-sm text-muted">@{campaign.instagramAccount.username}</p></div>
+        <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={toggleActive} disabled={busy} className="min-h-10 rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover disabled:opacity-50">{busy ? t("Loading…") : campaign.isActive ? t("Pause") : t("Resume")}</button><Link href={`/campaigns/${campaign.id}/edit`} className="inline-flex min-h-10 items-center rounded-xl bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">{t("Edit campaign")}</Link></div>
+      </div>
+      {error && <div role="alert" className="rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error">{error}</div>}
+      <div className="grid gap-6 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]">
+      <div className="panel order-2 space-y-6 p-5 sm:p-6 xl:order-1">
         <Summary title={t("When someone comments on")}>
           <div className="flex items-center gap-3">
             {postThumb ? (
@@ -303,57 +302,18 @@ export default function CampaignDetailPage() {
         </>}
       </div>
 
-      {/* Right: top bar + tabs */}
-      <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-3 border-b border-border pb-3">
-          <div className="flex gap-4">
-            <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>
-              {t("Insights")}
-            </TabButton>
-            <TabButton active={tab === "preview"} onClick={() => setTab("preview")}>
-              {t("Preview")}
-            </TabButton>
+      <div className="order-1 space-y-5 xl:order-2">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border">
+          <div className="flex gap-6" role="group" aria-label={t("Campaigns")}>
+            <TabButton active={tab === "insights"} onClick={() => setTab("insights")}>{t("Insights")}</TabButton>
+            <TabButton active={tab === "preview"} onClick={() => setTab("preview")}>{t("Preview")}</TabButton>
           </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href={`/campaigns/${campaign.id}/flow`}
-              className="rounded border border-accent/40 bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20"
-            >
-              Armar flujo
-            </Link>
-            <Link
-              href={`/campaigns/${campaign.id}/edit`}
-              className="rounded border border-border px-3 py-1.5 text-sm text-muted hover:text-foreground"
-            >
-              {t("Edit")}
-            </Link>
-            <button
-              onClick={toggleActive}
-              disabled={busy}
-              className={`rounded border px-3 py-1.5 text-sm disabled:opacity-50 ${
-                campaign.isActive
-                  ? "border-error/30 text-error hover:bg-error/10"
-                  : "border-success/30 text-success hover:bg-success/10"
-              }`}
-            >
-              {campaign.isActive ? t("Stop") : t("Resume")}
-            </button>
-          </div>
+          <Link href={`/campaigns/${campaign.id}/flow`} className="mb-2 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-medium hover:bg-surface-hover">Armar flujo ↗</Link>
         </div>
-
-        {tab === "insights" && (
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-            {metrics.map((m) => (
-              <div key={m.label} className="panel rounded p-4">
-                <p className="text-sm text-muted">{m.label}</p>
-                <p className="mt-1 text-2xl font-semibold text-foreground">
-                  {m.value}
-                </p>
-              </div>
-            ))}
-          </div>
-        )}
-
+        {tab === "insights" && <>
+          <div className="grid grid-cols-2 gap-3 sm:gap-4">{metrics.map((metric) => <StatCard key={metric.label} label={metric.label} value={metric.value} />)}</div>
+          <div className="panel p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">{t("Delivery overview")}</h2><Link href="/logs" className="text-xs text-muted hover:text-foreground">{t("See activity")} →</Link></div><dl className="mt-5 grid grid-cols-3 gap-4">{[{ label: t("Sent"), value: campaign.analytics.sent }, { label: t("Skipped"), value: campaign.analytics.skipped }, { label: t("Failed"), value: campaign.analytics.failed }].map((metric) => <div key={metric.label} className="border-r border-border last:border-0"><dt className="text-xs text-muted">{metric.label}</dt><dd className="mt-2 text-lg font-semibold tabular-nums">{metric.value}</dd></div>)}</dl></div>
+        </>}
         {tab === "preview" && campaign.flowEnabled && (
           <div className="panel space-y-3 p-6">
             <p className="text-sm text-muted">Probá los distintos caminos, respuestas y acciones desde el armador visual.</p>
@@ -399,13 +359,14 @@ export default function CampaignDetailPage() {
           </div>
         )}
       </div>
+      </div>
     </div>
   );
 }
 
 function Summary({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="space-y-2">
+    <div className="space-y-3 border-b border-border pb-6 last:border-0 last:pb-0">
       <h2 className="text-sm font-semibold text-foreground">{title}</h2>
       {children}
     </div>
@@ -414,7 +375,7 @@ function Summary({ title, children }: { title: string; children: React.ReactNode
 
 function FieldBox({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded border border-border bg-surface px-3 py-2 text-sm text-foreground">
+    <div className="rounded-xl border border-border bg-background px-3 py-3 text-sm leading-relaxed text-foreground">
       {children}
     </div>
   );
@@ -431,6 +392,7 @@ function TabButton({
 }) {
   return (
     <button
+      type="button" aria-pressed={active}
       onClick={onClick}
       className={`border-b-2 pb-2 text-sm font-medium ${
         active

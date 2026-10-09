@@ -2,6 +2,8 @@
 
 import { useI18n } from "@/lib/i18n/provider";
 import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 interface InvitationAcceptCardProps {
   token: string;
@@ -15,34 +17,40 @@ export default function InvitationAcceptCard({
   invitedEmail,
 }: InvitationAcceptCardProps) {
   const { t } = useI18n();
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   async function acceptInvite() {
     setBusy(true);
     setMessage(null);
-    const response = await fetch("/api/workspace/invitations/accept", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token }),
-    });
-    const payload = await response.json();
-    if (payload.success) {
-      window.location.assign("/dashboard");
-      return;
+    try {
+      const response = await fetch("/api/workspace/invitations/accept", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      const payload = await response.json();
+      if (response.ok && payload.success) {
+        router.push("/dashboard");
+        return;
+      }
+      setMessage(payload.error ?? t("Could not accept invitation"));
+    } catch {
+      setMessage(t("Could not accept invitation"));
+    } finally {
+      setBusy(false);
     }
-    setMessage(payload.error ?? t("Could not accept invitation"));
-    setBusy(false);
   }
 
   if (!isSignedIn) {
     return (
-      <a
+      <Link
         href="/login"
         className="inline-flex items-center justify-center rounded-xl bg-accent px-5 py-3 text-sm font-semibold text-white transition hover:bg-accent-hover"
       >
         {t("Sign in to accept")}
-      </a>
+      </Link>
     );
   }
 
@@ -56,7 +64,7 @@ export default function InvitationAcceptCard({
       >
         {busy ? t("Accepting...") : t("Accept invitation")}
       </button>
-      {message && <p className="text-sm text-error">{message}</p>}
+      {message && <p role="alert" className="text-sm text-error">{message}</p>}
       <p className="text-xs text-muted">
         {t("Use the magic link account for")} {invitedEmail}.
       </p>

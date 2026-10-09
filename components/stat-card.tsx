@@ -14,18 +14,19 @@ interface StatCardProps {
   value: string | number;
   trend?: string;
   trendUp?: boolean;
+  description?: string;
 }
 
-export default function StatCard({ label, value, trend, trendUp }: StatCardProps) {
-  const { t } = useI18n();
+export default function StatCard({ label, value, trend, trendUp, description }: StatCardProps) {
+  const { t, locale } = useI18n();
   return (
-    <div className="panel group relative overflow-hidden p-4 sm:p-5">
-      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/70 to-transparent opacity-60" />
-      <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-muted">{label}</p>
-      <p className="mt-2 text-2xl font-semibold tabular-nums tracking-tight text-foreground sm:text-3xl">{value}</p>
+    <div className="panel min-w-0 p-5 sm:p-6">
+      <p className="text-xs font-medium text-muted sm:text-sm">{label}</p>
+      <p className="mt-3 text-3xl font-semibold tabular-nums tracking-[-0.04em] text-foreground sm:text-4xl">{typeof value === "number" ? value.toLocaleString(locale) : value}</p>
+      {description && <p className="mt-2 text-xs text-muted">{description}</p>}
       {trend && (
-        <p className={`text-xs mt-1 ${trendUp ? "text-success" : "text-error"}`}>
-          {trendUp ? "Up" : t("Down")} {trend}
+        <p className={`text-xs mt-2 ${trendUp ? "text-success" : "text-error"}`}>
+          <span aria-hidden="true">{trendUp ? "↑" : "↓"}</span> {trendUp ? "" : t("Down")} {trend}
         </p>
       )}
     </div>

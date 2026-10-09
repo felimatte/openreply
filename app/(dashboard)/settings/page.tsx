@@ -61,6 +61,8 @@ export default function SettingsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<"ADMIN" | "MEMBER">("MEMBER");
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [copiedInvite, setCopiedInvite] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -69,10 +71,13 @@ export default function SettingsPage() {
     ])
       .then(([statsPayload, membersPayload]) => {
         if (statsPayload.success) setData(statsPayload.data);
+        else setError(statsPayload.error ?? t("Something went wrong. Try again."));
         if (membersPayload.success) setMembersData(membersPayload.data);
+        else setError(membersPayload.error ?? t("Something went wrong. Try again."));
       })
+      .catch(() => setError(t("Something went wrong. Try again.")))
       .finally(() => setLoading(false));
-  }, []);
+  }, [t]);
 
   async function refreshMembers() {
     const res = await fetch("/api/workspace/members");
@@ -86,46 +91,77 @@ export default function SettingsPage() {
     }
 
     setBusy(`disconnect:${instagramAccountId}`);
-    await fetch("/api/instagram/disconnect", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ instagramAccountId }),
-    });
-    window.location.reload();
+    setError(null);
+    try {
+      const response = await fetch("/api/instagram/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instagramAccountId }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t("Could not update connection."));
+      window.location.reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t("Could not update connection."));
+      setBusy(null);
+    }
   }
 
   async function inviteMember(event: React.FormEvent) {
     event.preventDefault();
     setMemberError(null);
     setBusy("invite");
-    const res = await fetch("/api/workspace/members", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
-    });
-    const payload = await res.json();
-    if (payload.success) {
-      setMembersData(payload.data);
-      setInviteEmail("");
-    } else {
-      setMemberError(payload.error ?? t("Could not invite member"));
+    try {
+      const res = await fetch("/api/workspace/members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      });
+      const payload = await res.json();
+      if (payload.success) {
+        setMembersData(payload.data);
+        setInviteEmail("");
+      } else {
+        setMemberError(payload.error ?? t("Could not invite member"));
+      }
+    } catch {
+      setMemberError(t("Could not invite member"));
+    } finally {
+      setBusy(null);
     }
-    setBusy(null);
   }
 
   async function removeInvitation(invitationId: string) {
     setBusy(`invite:${invitationId}`);
-    await fetch("/api/workspace/members", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invitationId }),
-    });
-    await refreshMembers();
-    setBusy(null);
+    setMemberError(null);
+    try {
+      const response = await fetch("/api/workspace/members", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invitationId }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t("Something went wrong. Try again."));
+      await refreshMembers();
+    } catch (cause) {
+      setMemberError(cause instanceof Error ? cause.message : t("Something went wrong. Try again."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function copyInvitation(id: string, url: string) {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedInvite(id);
+      window.setTimeout(() => setCopiedInvite(null), 2000);
+    } catch {
+      setMemberError(t("Something went wrong. Try again."));
+    }
   }
 
   if (loading) {
-    return <div className="panel rounded p-8 h-64" />;
+    return <div aria-label={t("Loading…")} className="mx-auto max-w-5xl space-y-6"><div className="h-9 w-48 animate-pulse rounded-lg bg-surface-hover"/><div className="grid gap-6 md:grid-cols-[180px_1fr]"><div className="h-64 animate-pulse rounded-2xl bg-surface-hover"/><div className="h-96 animate-pulse rounded-2xl bg-surface-hover"/></div></div>;
   }
 
   const accounts = data?.instagramAccounts ?? [];
@@ -134,7 +170,20 @@ export default function SettingsPage() {
     membersData?.currentUserRole === "ADMIN";
 
   return (
-    <div className="max-w-2xl mx-auto space-y-8">
+    <div className="mx-auto max-w-5xl space-y-8">
+      <div><h1 className="text-3xl font-semibold tracking-tight">{t("Settings")}</h1><p className="mt-2 text-sm text-muted">{t("Manage your workspace, connections and team.")}</p></div>
+      {error && <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error"><span>{error}</span><button className="shrink-0 font-semibold underline" onClick={() => window.location.reload()}>{t("Try again")}</button></div>}
+      <div className="grid items-start gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
+      <nav aria-label={t("Settings")} className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-2 lg:top-8 lg:flex-col lg:border-0 lg:bg-transparent lg:p-0">
+        {([
+          ["connections", "Instagram Connection"],
+          ["google-sheets", "Google Sheets"],
+          ["team", "Team"],
+          ["preferences", "Preferences"],
+          ["usage", "Usage"],
+        ] as const).map(([id, title]) => <a key={id} href={`#${id}`} className="shrink-0 rounded-lg px-3 py-2.5 text-sm font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground">{t(title)}</a>)}
+      </nav>
+      <div className="min-w-0 space-y-6">
       {/* Surfaces the ?instagram= code the OAuth routes redirect back with.
           Needs a Suspense boundary: useSearchParams in a prerendered client
           page fails the production build without one. */}
@@ -142,15 +191,7 @@ export default function SettingsPage() {
         <InstagramConnectNotice />
       </Suspense>
 
-      <section className="panel rounded p-4 sm:p-6 space-y-3">
-        <h2 className="text-base font-semibold">{t("Interface language")}</h2>
-        <LanguageSwitcher />
-        <p className="text-sm text-muted">{t("Saved in this browser. Campaign messages stay unchanged.")}</p>
-      </section>
-
-      <ZernioConnection canManage={canManageMembers} />
-
-      <section className="panel rounded p-4 sm:p-6">
+      <section id="connections" className="panel scroll-mt-24 rounded-2xl p-5 sm:p-7">
         <h2 className="text-base font-semibold mb-6">{t("Instagram Connection")}</h2>
 
         <div className="space-y-4">
@@ -193,9 +234,9 @@ export default function SettingsPage() {
             {accounts.map((account) => (
               <div
                 key={account.id}
-                className="flex flex-col gap-3 rounded border border-border bg-surface/70 p-4 sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-4 rounded-xl border border-border bg-background/60 p-4 sm:flex-row sm:items-center sm:justify-between"
               >
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-semibold text-foreground">
                     @{account.username}
                   </p>
@@ -210,7 +251,7 @@ export default function SettingsPage() {
                 <button
                   onClick={() => disconnectInstagram(account.id)}
                   disabled={busy === `disconnect:${account.id}`}
-                  className="inline-flex items-center justify-center rounded border border-error/20 px-4 py-2 text-sm font-medium text-error transition-all hover:border-error/40 hover:bg-error/10 disabled:opacity-50"
+                  className="inline-flex self-start items-center justify-center rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:border-error/30 hover:bg-error/5 hover:text-error disabled:opacity-50 sm:self-auto"
                 >
                   {busy === `disconnect:${account.id}`
                     ? t("Disconnecting...")
@@ -221,19 +262,24 @@ export default function SettingsPage() {
           </div>
         </div>
 
-        <div className="mt-6 pt-4 border-t border-border flex gap-3">
+        <div className="mt-4 flex flex-wrap gap-3 border-t border-border pt-5">
           <a
             href="/api/instagram/connect"
-            className="px-4 py-2 rounded text-sm font-medium transition-colors bg-accent text-white hover:bg-accent-hover"
+            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
           >
             {t("Connect using your own Meta app")}
           </a>
         </div>
       </section>
 
+      <details className="group rounded-2xl border border-border bg-surface">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-5 text-sm font-medium"><span>{t("Easier Instagram setup")} <span className="ml-2 text-xs font-normal text-muted">{t("Optional connection provider")}</span></span><span aria-hidden="true" className="text-muted transition-transform group-open:rotate-45">+</span></summary>
+        <div className="border-t border-border"><ZernioConnection canManage={canManageMembers} /></div>
+      </details>
+
       <ContactSyncSettings canManage={canManageMembers} />
 
-      <section className="panel rounded p-4 sm:p-6">
+      <section id="team" className="panel scroll-mt-24 rounded-2xl p-5 sm:p-7">
         <h2 className="text-base font-semibold mb-6">{t("Team")}</h2>
         <div className="space-y-3">
           {membersData?.members.map((member) => (
@@ -276,12 +322,10 @@ export default function SettingsPage() {
                   <div className="flex gap-2">
                     <button
                       type="button"
-                      onClick={() =>
-                        void navigator.clipboard?.writeText(invitation.inviteUrl)
-                      }
+                      onClick={() => void copyInvitation(invitation.id, invitation.inviteUrl)}
                       className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-border-hover hover:text-foreground"
                     >
-                      {t("Copy")}
+                      {copiedInvite === invitation.id ? t("Copied") : t("Copy")}
                     </button>
                     <button
                       type="button"
@@ -305,6 +349,7 @@ export default function SettingsPage() {
           >
             <input
               type="email"
+              aria-label={t("Email")}
               value={inviteEmail}
               onChange={(event) => setInviteEmail(event.target.value)}
               placeholder="teammate@agency.com"
@@ -312,6 +357,7 @@ export default function SettingsPage() {
               required
             />
             <select
+              aria-label={t("Role")}
               value={inviteRole}
               onChange={(event) =>
                 setInviteRole(event.target.value as "ADMIN" | "MEMBER")
@@ -323,19 +369,24 @@ export default function SettingsPage() {
             </select>
             <button
               type="submit"
-              disabled={busy === "invite"}
+              disabled={busy !== null}
               className="rounded bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-50"
             >
               {busy === "invite" ? t("Inviting...") : t("Invite")}
             </button>
             {memberError && (
-              <p className="sm:col-span-3 text-sm text-error">{memberError}</p>
+              <p role="alert" className="sm:col-span-3 text-sm text-error">{memberError}</p>
             )}
           </form>
         )}
       </section>
 
-      <section className="panel rounded p-4 sm:p-6">
+      <section id="preferences" className="panel scroll-mt-24 space-y-4 rounded-2xl p-5 sm:p-7">
+        <div className="flex flex-wrap items-center justify-between gap-4"><h2 className="text-base font-semibold">{t("Interface language")}</h2><LanguageSwitcher /></div>
+        <p className="text-sm text-muted">{t("Saved in this browser. Campaign messages stay unchanged.")}</p>
+      </section>
+
+      <section id="usage" className="panel scroll-mt-24 rounded-2xl p-5 sm:p-7">
         <h2 className="text-base font-semibold mb-6">{t("Usage")}</h2>
         <div className="flex items-center justify-between gap-3 py-3">
           <div>
@@ -351,6 +402,8 @@ export default function SettingsPage() {
           </span>
         </div>
       </section>
+      </div>
+      </div>
     </div>
   );
 }

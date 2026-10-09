@@ -694,7 +694,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   }
 
   if (loading) {
-    return <div className="panel h-64 rounded" />;
+    return <div className="campaign-loading" role="status" aria-live="polite"><p>Preparando tu campaña…</p><div className="campaign-loading-lines" aria-hidden="true"><span /><span /><span /></div></div>;
   }
 
   if (notFound) {

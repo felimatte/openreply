@@ -3,7 +3,7 @@
 import type { StaticMessageKey } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/provider";
 /**
- * Status label for DM status. Plain text; color carries the state.
+ * Compact status label with both a written state and a visual marker.
  */
 
 const statusConfig: Record<string, { text: string; label: StaticMessageKey }> = {
@@ -25,7 +25,8 @@ export default function StatusBadge({ status }: StatusBadgeProps) {
   const config = statusConfig[status] ?? statusConfig.PENDING;
 
   return (
-    <span className={`shrink-0 whitespace-nowrap text-sm ${config.text}`}>
+    <span className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full bg-current/5 px-2 py-1 text-xs font-medium ${config.text}`}>
+      <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />
       {t(config.label)}
     </span>
   );

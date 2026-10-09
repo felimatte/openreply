@@ -33,9 +33,9 @@ export interface FollowerChartPoint {
 
 // Colors read against the light chart surface (#ffffff): the accent line clears
 // 3:1 contrast and grid/axis text match the muted/border tokens. See globals.css.
-const SERIES_COLOR = "#f97316";
-const GRID_COLOR = "#e4e4e7";
-const AXIS_TEXT = "#71717a";
+const SERIES_COLOR = "#24292f";
+const GRID_COLOR = "#e6e8ec";
+const AXIS_TEXT = "#6b7280";
 
 function formatCompact(n: number, locale: Locale): string {
   if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -67,7 +67,7 @@ function ChartTooltip({
   const point = payload[0].payload;
 
   return (
-    <div className="rounded border border-border bg-surface px-3 py-2 text-xs shadow-lg">
+    <div className="rounded-xl border border-border bg-surface px-4 py-3 text-xs shadow-lg">
       <p className="text-muted">{formatDay(point.date, locale)}</p>
       <p className="mt-1 font-semibold text-foreground">
         {point.followers.toLocaleString(locale)} {t("followers")}
@@ -99,7 +99,7 @@ export default function FollowerChart({
     data.length > 1 ? data[data.length - 1].followers - data[0].followers : null;
 
   return (
-    <div className="panel rounded p-4 sm:p-6">
+    <div className="panel p-5 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-foreground">
@@ -124,7 +124,7 @@ export default function FollowerChart({
           <button
             type="button"
             onClick={() => setShowTable((v) => !v)}
-            className="rounded border border-border px-3 py-1.5 text-xs font-medium text-muted transition-colors hover:border-border-hover hover:text-foreground"
+            aria-pressed={showTable} className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted transition-colors hover:bg-surface-hover hover:text-foreground"
           >
             {showTable ? t("Show chart") : t("Show table")}
           </button>
@@ -132,7 +132,7 @@ export default function FollowerChart({
       </div>
 
       {data.length < 2 ? (
-        <div className="mt-6 rounded border border-border bg-surface/60 p-6 text-center">
+        <div className="mt-6 rounded-xl border border-dashed border-border bg-background p-8 text-center">
           <p className="text-sm text-foreground">{t("Collecting follower history")}</p>
           <p className="mt-1 text-sm text-muted">
             {data.length === 0
@@ -169,7 +169,7 @@ export default function FollowerChart({
           </table>
         </div>
       ) : (
-        <div className="mt-6 h-56 sm:h-64">
+        <div className="mt-8 h-56 sm:h-64">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={data}
@@ -206,7 +206,7 @@ export default function FollowerChart({
                 type="monotone"
                 dataKey="followers"
                 stroke={SERIES_COLOR}
-                strokeWidth={2}
+                strokeWidth={2.5}
                 dot={false}
                 activeDot={{ r: 4, fill: SERIES_COLOR, stroke: "#ffffff", strokeWidth: 2 }}
                 isAnimationActive={false}

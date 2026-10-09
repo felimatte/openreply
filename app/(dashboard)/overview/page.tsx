@@ -42,17 +42,22 @@ export default function OverviewPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
   const [count, setCount] = useState("50");
+  const [retry, setRetry] = useState(0);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<"timestamp" | "views" | "likes" | "comments">("timestamp");
 
   useEffect(() => {
+    const controller = new AbortController();
     const params = new URLSearchParams();
     if (selectedAccountId !== "all") {
       params.set("instagramAccountId", selectedAccountId);
     }
     params.set("count", count);
 
-    fetch(`/api/instagram/overview?${params}`)
+    fetch(`/api/instagram/overview?${params}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((res) => {
+        if (controller.signal.aborted) return;
         if (res.success) {
           setData(res.data);
           setError(null);
@@ -60,9 +65,10 @@ export default function OverviewPage() {
           setError(res.error ?? "Failed to load overview");
         }
       })
-      .catch(() => setError("Failed to load overview"))
-      .finally(() => setLoading(false));
-  }, [selectedAccountId, count]);
+      .catch(() => { if (!controller.signal.aborted) setError("Failed to load overview"); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [selectedAccountId, count, retry]);
 
   function handleAccountChange(accountId: string) {
     setLoading(true);
@@ -74,7 +80,7 @@ export default function OverviewPage() {
     setCount(next);
   }
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
         {[...Array(6)].map((_, i) => (
@@ -87,10 +93,11 @@ export default function OverviewPage() {
     );
   }
 
-  if (error) {
+  if (error && !data) {
     return (
-      <div className="panel rounded p-8 text-center">
+      <div className="panel p-8 text-center" role="alert">
         <p className="text-sm text-error">{error === "Failed to load overview" ? t("Failed to load overview") : error}</p>
+        <button type="button" onClick={() => { setLoading(true); setRetry((value) => value + 1); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium">{t("Try again")}</button>
         {error.includes("connect") && (
           <a
             href="/api/instagram/connect"
@@ -107,13 +114,17 @@ export default function OverviewPage() {
 
   const { totals, posts, accounts, insightsAvailable, followers, followerHistory } =
     data;
+  const visiblePosts = posts
+    .filter((post) => !search.trim() || (post.caption ?? "").toLowerCase().includes(search.trim().toLowerCase()))
+    .toSorted((a, b) => sort === "timestamp" ? new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime() : (b[sort] ?? -1) - (a[sort] ?? -1));
 
   return (
-    <div className="space-y-8">
-      {data.limitations?.map(note => <p key={note} className="text-sm text-muted">{note}</p>)}
+    <div className="space-y-7" aria-busy={loading}>
+
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-foreground">{t("Overview")}</h1>
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{t("Account performance")}</h1>
+          <p className="mt-2 text-sm text-muted">{t("Track your content and audience in one place.")}</p>
           <p className="text-sm text-muted mt-1">
             {data.provider !== "ZERNIO" && data.requestedCount === "all" ? t("All-time") : t("Recent")} —{" "}
             {t(totals.posts === 1 ? "{count} post" : "{count} posts", { count: totals.posts })} {t("from @")}
@@ -136,7 +147,7 @@ export default function OverviewPage() {
             <select
               value={count}
               onChange={(e) => handleCountChange(e.target.value)}
-              className="border-0 bg-transparent py-2 pr-1 text-sm text-foreground outline-none"
+              className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-foreground"
             >
               {COUNT_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>
@@ -159,6 +170,8 @@ export default function OverviewPage() {
         </div>
       </div>
 
+      {error && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error"><p>{error === "Failed to load overview" ? t("Failed to load overview") : error}</p><button type="button" onClick={() => { setLoading(true); setRetry((value) => value + 1); }} className="rounded-lg border border-border bg-surface px-3 py-2 text-foreground">{t("Try again")}</button></div>}
+      {data.limitations?.map((note) => <p key={note} className="rounded-xl border border-border bg-surface px-4 py-3 text-xs leading-relaxed text-muted">{note}</p>)}
       {!insightsAvailable && (
         <div className="panel rounded p-4 border border-border">
           <p className="text-sm text-foreground">
@@ -190,9 +203,12 @@ export default function OverviewPage() {
       <FollowerChart data={followerHistory} followers={followers} />
 
       {/* Per-post table */}
-      <div className="panel rounded p-4 sm:p-6">
-        <h2 className="text-sm font-semibold text-foreground mb-4">{t("Posts")}</h2>
-        {posts.length === 0 ? (
+      <div className="panel overflow-hidden p-5 sm:p-6">
+        <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <h2 className="text-sm font-semibold text-foreground">{t("Posts")} <span className="ml-2 font-normal text-muted">{visiblePosts.length}</span></h2>
+          <div className="flex flex-col gap-2 sm:flex-row"><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} aria-label={t("Search your posts by caption…")} placeholder={t("Search your posts by caption…")} className="min-h-10 rounded-xl border border-border bg-background px-3 py-2 text-sm placeholder:text-muted" /><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label={t("Sort by")} className="min-h-10 rounded-xl border border-border bg-surface px-3 py-2 text-sm"><option value="timestamp">{t("Date")}</option><option value="views">{t("Views")}</option><option value="likes">{t("Likes")}</option><option value="comments">{t("Comments")}</option></select></div>
+        </div>
+        {visiblePosts.length === 0 ? (
           <p className="text-sm text-muted py-8 text-center">{t("No posts found")}</p>
         ) : (
           // Eight metric columns can't compress into a phone; let the table keep
@@ -200,7 +216,7 @@ export default function OverviewPage() {
           <div className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:px-0">
             <table className="w-full min-w-[720px] text-sm">
               <thead>
-                <tr className="text-left text-xs uppercase tracking-wide text-zinc-500 border-b border-border">
+                <tr className="border-b border-border text-left text-[11px] font-medium text-muted">
                   <th className="py-2 pr-4 font-medium">{t("Post")}</th>
                   <th className="py-2 px-3 font-medium text-right">{t("Views")}</th>
                   <th className="py-2 px-3 font-medium text-right">{t("Reach")}</th>
@@ -212,10 +228,10 @@ export default function OverviewPage() {
                 </tr>
               </thead>
               <tbody>
-                {posts.map((p) => (
+                {visiblePosts.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-b border-border last:border-0"
+                    className="border-b border-border transition-colors last:border-0 hover:bg-background"
                   >
                     <td className="py-3 pr-4 max-w-xs">
                       {p.permalink ? (
@@ -223,7 +239,7 @@ export default function OverviewPage() {
                           href={p.permalink}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-foreground hover:text-accent truncate block"
+                          className="block truncate font-medium text-foreground hover:underline"
                         >
                           {p.caption || t("{type} post", { type: p.mediaType })}
                         </a>
@@ -233,22 +249,22 @@ export default function OverviewPage() {
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-right text-muted">
+                    <td className="px-3 py-4 text-right tabular-nums text-muted">
                       {formatNumber(p.views, locale)}
                     </td>
-                    <td className="py-3 px-3 text-right text-muted">
+                    <td className="px-3 py-4 text-right tabular-nums text-muted">
                       {formatNumber(p.reach, locale)}
                     </td>
-                    <td className="py-3 px-3 text-right text-muted">
+                    <td className="px-3 py-4 text-right tabular-nums text-muted">
                       {formatNumber(p.likes, locale)}
                     </td>
-                    <td className="py-3 px-3 text-right text-muted">
+                    <td className="px-3 py-4 text-right tabular-nums text-muted">
                       {formatNumber(p.comments, locale)}
                     </td>
-                    <td className="py-3 px-3 text-right text-muted">
+                    <td className="px-3 py-4 text-right tabular-nums text-muted">
                       {formatNumber(p.saved, locale)}
                     </td>
-                    <td className="py-3 px-3 text-right text-muted">
+                    <td className="px-3 py-4 text-right tabular-nums text-muted">
                       {formatNumber(p.shares, locale)}
                     </td>
                     <td className="py-3 pl-3 text-right text-zinc-500">

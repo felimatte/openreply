@@ -3,6 +3,9 @@ import { getI18n } from "@/lib/i18n/server";
 import { getCampaignTemplate } from "@/lib/templates/campaign-templates";
 import { DemoNotice } from "@/components/demo-notice";
 import { isPublicDemoHost } from "@/lib/env";
+import Link from "next/link";
+import AppIcon from "@/components/app-icon";
+import SignInButton from "@/components/sign-in-button";
 
 const GITHUB_URL = "https://github.com/diwenne/openreply";
 const SETUP_DOCS_URL = `${GITHUB_URL}/blob/main/docs/setup.md`;
@@ -22,6 +25,7 @@ export default async function LoginPage({
     checkEmail?: string;
     callbackUrl?: string;
     template?: string;
+    preview?: string;
   }>;
 }) {
   const { t } = await getI18n();
@@ -70,12 +74,10 @@ export default async function LoginPage({
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center px-6">
+    <div className="min-h-screen flex flex-col items-center justify-center px-6 py-12">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-2xl font-semibold text-foreground">
-            OpenReply
-          </h1>
+          <h1><Link href="/" className="inline-flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-foreground"><span className="flex size-10 items-center justify-center rounded-xl bg-accent text-white"><AppIcon name="inbox" className="size-6" /></span>OpenReply.</Link></h1>
           <p className="text-muted text-sm leading-relaxed mt-2">
             {selectedTemplate
               ? t("Sign in to use the {name} template.", { name: selectedTemplate.title })
@@ -84,8 +86,9 @@ export default async function LoginPage({
         </div>
 
         <DemoNotice variant="panel" />
+        {params.preview === "1" && <p role="status" className="mb-5 rounded-lg border border-border bg-surface px-4 py-3 text-sm leading-relaxed text-muted">{t("You are leaving the demo. Sign in to access your workspace and real campaigns.")}</p>}
 
-        <div className="panel rounded p-8 shadow-black/40">
+        <div className="panel p-6 sm:p-9">
           {selectedTemplate && !checkEmail && (
             <div className="mb-5 border border-accent/20 bg-accent/10 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-accent">
@@ -120,19 +123,15 @@ export default async function LoginPage({
                   required
                   autoComplete="email"
                   placeholder="you@company.com"
-                  className="w-full px-4 py-3 rounded bg-surface border border-border text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none transition-colors"
+                  className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted focus:border-accent/40"
                 />
               </div>
 
-              <button
-                type="submit"
-                className="w-full inline-flex items-center justify-center gap-2 rounded bg-accent px-6 py-3.5 text-sm font-semibold text-white shadow-indigo-500/25 transition-all hover:shadow-indigo-500/30"
-              >
-                {t("Email me a magic link")}
-              </button>
+              <SignInButton />
             </form>
           )}
         </div>
+        <div className="mt-7 flex items-center justify-center gap-5 text-xs text-muted"><Link href="/demo" className="hover:text-foreground">{t("Explore the demo")}</Link><span aria-hidden="true">·</span><Link href="/demo/flow" className="hover:text-foreground">{t("Try the flow editor")}</Link></div>
       </div>
     </div>
   );

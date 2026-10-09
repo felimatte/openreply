@@ -11,7 +11,7 @@ export default function LanguageSwitcher() {
 
   return (
     <div className="space-y-1">
-      <label className="inline-flex items-center gap-2 text-sm text-muted">
+      <label className="inline-flex w-full items-center justify-between gap-2 text-xs text-muted">
         <span>{t("Language")}</span>
         <select
           value={locale}
@@ -28,7 +28,7 @@ export default function LanguageSwitcher() {
               }
             });
           }}
-          className="min-h-9 rounded border border-border bg-surface px-2 text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60"
+          className="min-h-8 min-w-0 rounded-md border border-border bg-surface px-2 text-xs text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-60"
         >
           <option value="en" lang="en">
             English

@@ -11,6 +11,7 @@
  */
 
 import type { Locale } from "@/lib/i18n";
+import Link from "next/link";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
@@ -40,6 +41,9 @@ function formatTime(iso: string | null, locale: Locale): string {
 export default function InboxPage() {
   const { t, locale } = useI18n();
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountsError, setAccountsError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
   // Seed from the last-used account so a revisit can paint the cached
   // conversation list immediately, before the account list even loads.
   const [selectedAccountId, setSelectedAccountId] = useState(() => {
@@ -54,6 +58,7 @@ export default function InboxPage() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState<string | null>(null);
 
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -61,30 +66,50 @@ export default function InboxPage() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const conversationRequests = useRef(new Set<string>());
+  const selectionRef = useRef({ accountId: selectedAccountId, conversationId: activeId });
+  const draftsRef = useRef<Record<string, string>>({});
+  const shouldScrollRef = useRef(true);
+  const sendSequenceRef = useRef(0);
+
+  useEffect(() => {
+    selectionRef.current = { accountId: selectedAccountId, conversationId: activeId };
+  }, [selectedAccountId, activeId]);
 
   const active = conversations.find((c) => c.id === activeId) ?? null;
+  const visibleConversations = conversations.filter((conversation) =>
+    `${conversation.contact.username ?? ""} ${conversation.lastMessage?.text ?? ""}`
+      .toLocaleLowerCase(locale).includes(search.trim().toLocaleLowerCase(locale))
+  );
 
   // Accounts for the selector; default to the first connected account. Uses the
   // lightweight accounts endpoint (one query) rather than the heavy dashboard
   // stats aggregation, so the inbox isn't gated on analytics before it can load.
+  const loadAccounts = useCallback(async () => {
+    setAccountsLoading(true);
+    try {
+      const response = await fetch("/api/instagram/accounts", { cache: "no-store" });
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t("Could not load connection."));
+      const next: AccountOption[] = payload.data.instagramAccounts ?? [];
+      setAccounts(next);
+      setAccountsError(null);
+      setSelectedAccountId((prev) => {
+        // Only a successful response can invalidate the remembered selection.
+        // A temporary accounts failure must leave cached conversations usable.
+        const stillValid = prev && next.some((account) => account.id === prev);
+        return stillValid ? prev : payload.data.selectedInstagramAccountId || next[0]?.id || "";
+      });
+    } catch (error) {
+      setAccountsError(error instanceof Error ? error.message : t("Could not load connection."));
+    } finally {
+      setAccountsLoading(false);
+    }
+  }, [t]);
+
   useEffect(() => {
-    fetch("/api/instagram/accounts")
-      .then((r) => r.json())
-      .then((payload) => {
-        if (!payload.success) return;
-        const next: AccountOption[] = payload.data.instagramAccounts ?? [];
-        setAccounts(next);
-        setSelectedAccountId((prev) => {
-          // Keep the seeded account only if it's still connected; otherwise
-          // fall back to the default so a removed account can't wedge the inbox.
-          const stillValid = prev && next.some((a) => a.id === prev);
-          return stillValid
-            ? prev
-            : payload.data.selectedInstagramAccountId || next[0]?.id || "";
-        });
-      })
-      .catch(() => setAccounts([]));
-  }, []);
+    const timer = window.setTimeout(() => void loadAccounts(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadAccounts]);
 
   // Remember the chosen account for the next visit.
   useEffect(() => {
@@ -103,18 +128,19 @@ export default function InboxPage() {
           { cache: "no-store" }
         );
         const data = await res.json();
+        if (selectionRef.current.accountId !== selectedAccountId) return;
         if (data.success) {
           setConversations(data.data.conversations);
           writeCache(convCacheKey(selectedAccountId), data.data.conversations);
           setConvError(null);
-        } else if (!silent) {
+        } else {
           setConvError(data.error ?? "Failed to load conversations");
         }
       } catch {
-        if (!silent) setConvError("Failed to load conversations");
+        if (selectionRef.current.accountId === selectedAccountId) setConvError("Failed to load conversations");
       } finally {
         conversationRequests.current.delete(selectedAccountId);
-        if (!silent) setConvLoading(false);
+        if (selectionRef.current.accountId === selectedAccountId && !silent) setConvLoading(false);
       }
     },
     [selectedAccountId]
@@ -129,6 +155,9 @@ export default function InboxPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveId(null);
     setMessages([]);
+    setDraft("");
+    setSearch("");
+    setConvError(null);
     const cached = readCache<ConversationListItem[]>(
       convCacheKey(selectedAccountId),
       CACHE_MAX_AGE_MS
@@ -155,17 +184,21 @@ export default function InboxPage() {
           { cache: "no-store" }
         );
         const data = await res.json();
+        if (selectionRef.current.accountId !== selectedAccountId || selectionRef.current.conversationId !== conversationId) return;
         if (data.success) {
           setMessages(data.data.messages);
           writeCache(msgCacheKey(conversationId), data.data.messages);
+          setThreadError(null);
+        } else {
+          setThreadError(data.error ?? t("Could not load messages."));
         }
       } catch {
-        // keep whatever is shown
+        if (selectionRef.current.conversationId === conversationId) setThreadError(t("Could not load messages."));
       } finally {
-        if (!silent) setThreadLoading(false);
+        if (!silent && selectionRef.current.conversationId === conversationId) setThreadLoading(false);
       }
     },
-    [selectedAccountId]
+    [selectedAccountId, t]
   );
 
   // Load + poll the open thread. Cached messages render instantly while a fresh
@@ -196,17 +229,22 @@ export default function InboxPage() {
   // Keep the thread pinned to the latest message.
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el && shouldScrollRef.current) el.scrollTop = el.scrollHeight;
   }, [messages]);
 
   function openConversation(id: string) {
+    if (activeId) draftsRef.current[activeId] = draft;
+    selectionRef.current = { accountId: selectedAccountId, conversationId: id };
     setActiveId(id);
+    setDraft(draftsRef.current[id] ?? "");
     setSendError(null);
+    setThreadError(null);
+    shouldScrollRef.current = true;
     // Paint any cached thread synchronously so the pane never flashes empty
     // or shows the previously open conversation while the fetch runs.
     const cached = readCache<ThreadMessage[]>(msgCacheKey(id), CACHE_MAX_AGE_MS);
     setMessages(cached.data ?? []);
-    setThreadLoading(!cached.data);
+    setThreadLoading(!cached.data && !conversations.find((conversation) => conversation.id === id)?.detailsUnavailable);
   }
 
   async function handleSend() {
@@ -217,14 +255,16 @@ export default function InboxPage() {
 
     // Optimistically show the reply immediately, then confirm with the server.
     const optimistic: ThreadMessage = {
-      id: `optimistic-${Date.now()}`,
+      id: `optimistic-${++sendSequenceRef.current}`,
       text,
       fromMe: true,
       fromUsername: null,
       createdTime: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, optimistic]);
+    shouldScrollRef.current = true;
     setDraft("");
+    draftsRef.current[active.id] = "";
 
     try {
       const res = await fetch("/api/instagram/conversations", {
@@ -242,183 +282,125 @@ export default function InboxPage() {
         void loadConversations(true);
       } else {
         // Roll the optimistic message back and restore the draft so it's not lost.
-        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
-        setDraft(text);
-        setSendError(data.error ?? t("Failed to send message"));
+        draftsRef.current[active.id] = text;
+        if (selectionRef.current.conversationId === active.id) {
+          setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+          setDraft(text);
+          setSendError(data.error ?? t("Failed to send message"));
+        }
       }
     } catch {
-      setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
-      setDraft(text);
-      setSendError(t("Failed to send message"));
+      draftsRef.current[active.id] = text;
+      if (selectionRef.current.conversationId === active.id) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimistic.id));
+        setDraft(text);
+        setSendError(t("Failed to send message"));
+      }
     } finally {
       setSending(false);
     }
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       void handleSend();
     }
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-end justify-between gap-4">
-        <h1 className="text-lg font-semibold text-foreground">{t("Inbox")}</h1>
-        {accounts.length > 1 && (
-          <AccountSelect
-            accounts={accounts}
-            value={selectedAccountId}
-            onChange={setSelectedAccountId}
-            includeAll={false}
-          />
-        )}
+    <div className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">{t("Inbox")}</h1>
+          <p className="mt-2 text-sm text-muted">{t("Your conversations, all in one place.")}</p>
+        </div>
+        {accounts.length > 1 && <AccountSelect accounts={accounts} value={selectedAccountId} onChange={(id) => {
+          if (activeId) draftsRef.current[activeId] = draft;
+          selectionRef.current = { accountId: id, conversationId: null };
+          setSelectedAccountId(id);
+        }} includeAll={false} />}
       </div>
 
-      <div className="grid h-[calc(100dvh-11rem)] grid-cols-1 overflow-hidden rounded border border-border sm:grid-cols-[300px_1fr]">
-        {/* Conversation list. On mobile it takes the full pane and is hidden
-            once a thread is open (ManyChat-style); on sm+ it is always shown. */}
-        <div
-          className={`min-h-0 flex-col border-b border-border sm:flex sm:border-b-0 sm:border-r ${
-            active ? "hidden" : "flex"
-          }`}
-        >
-          <div className="shrink-0 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
-            {t("Conversations")}
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {convLoading ? (
-              <p className="px-4 py-6 text-sm text-muted">{t("Loading…")}</p>
-            ) : convError ? (
-              <p className="px-4 py-6 text-sm text-error">{convError === "Failed to load conversations" ? t("Failed to load conversations") : convError}</p>
-            ) : conversations.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-muted">{t("No conversations yet.")}</p>
-            ) : (
-              conversations.map((c) => {
-                const isActive = c.id === activeId;
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => openConversation(c.id)}
-                    className={`block w-full border-b border-border px-4 py-3 text-left ${
-                      isActive ? "bg-surface-hover" : "hover:bg-surface-hover"
-                    }`}
-                  >
-                    <div className="flex items-baseline justify-between gap-2">
-                      <span className="truncate text-sm font-medium text-foreground">
-                        {c.detailsUnavailable ? t("Details unavailable") : `@${c.contact.username ?? "unknown"}`}
-                      </span>
-                      <span className="shrink-0 text-[11px] text-zinc-500">
-                        {formatTime(c.updatedTime, locale)}
-                      </span>
-                    </div>
-                    {c.detailsUnavailable && (
-                      <p className="mt-0.5 text-xs text-muted">{t("Instagram could not load this conversation.")}</p>
-                    )}
-                    {c.lastMessage && (
-                      <p className="mt-0.5 truncate text-xs text-muted">
-                        {c.lastMessage.fromMe ? t("You: ") : ""}
-                        {c.lastMessage.text || t("(no text)")}
-                      </p>
-                    )}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
+      {accountsError && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error"><p>{accountsError}</p><button type="button" onClick={() => void loadAccounts()} disabled={accountsLoading} className="font-semibold underline disabled:opacity-40">{accountsLoading ? t("Loading…") : t("Try again")}</button></div>}
 
-        {/* Thread. On mobile it is only shown once a conversation is open and
-            fills the pane; on sm+ it always sits beside the list. */}
-        <div
-          className={`min-h-0 flex-col ${active ? "flex" : "hidden sm:flex"}`}
-        >
-          {!active ? (
-            <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted">
-              {t("Select a conversation to read and reply.")}
+      {!accountsLoading && !accountsError && accounts.length === 0 ? (
+        <div className="panel flex min-h-96 flex-col items-center justify-center rounded-2xl p-8 text-center">
+          <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-surface-hover text-2xl text-muted" aria-hidden="true">↗</div>
+          <h2 className="text-lg font-semibold">{t("Connect Instagram")}</h2>
+          <p className="mt-2 max-w-md text-sm leading-6 text-muted">{t("Connect an Instagram professional account to launch campaigns.")}</p>
+          <Link href="/settings#connections" className="mt-6 rounded-lg bg-accent px-5 py-3 text-sm font-medium text-white hover:bg-accent-hover">{t("Connection settings")}</Link>
+        </div>
+      ) : !accountsError || selectedAccountId ? (
+      <div className="grid h-[calc(100dvh-18rem)] min-h-[400px] grid-cols-1 overflow-hidden rounded-2xl border border-border bg-surface shadow-sm md:h-[calc(100dvh-15rem)] md:min-h-[480px] md:grid-cols-[320px_minmax(0,1fr)] xl:grid-cols-[360px_minmax(0,1fr)]">
+        <div className={`min-h-0 flex-col border-border md:flex md:border-r ${active ? "hidden" : "flex"}`}>
+          <div className="shrink-0 space-y-4 border-b border-border p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold">{t("Conversations")}</h2>
+                <span className="rounded-md bg-surface-hover px-2 py-0.5 text-xs tabular-nums text-muted">{conversations.length}</span>
+              </div>
+              <button type="button" onClick={() => void loadConversations(false)} disabled={convLoading} className="text-xs font-medium text-muted hover:text-foreground disabled:opacity-40">{t("Refresh")}</button>
             </div>
-          ) : (
-            <>
-              <div className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3 text-sm font-semibold text-foreground">
-                <button
-                  type="button"
-                  onClick={() => setActiveId(null)}
-                  className="-ml-1 rounded px-2 py-1 text-muted hover:text-foreground sm:hidden"
-                  aria-label={t("Back to conversations")}
-                >
-                  {t("Back")}
-                </button>
-                <span className="truncate">
-                  {active.detailsUnavailable ? t("Details unavailable") : `@${active.contact.username ?? "unknown"}`}
+            <label className="relative block">
+              <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+              <input type="search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Search conversations")} aria-label={t("Search conversations")} className="w-full rounded-lg border border-border bg-background py-2.5 pl-9 pr-3 text-sm outline-none focus:border-accent/40" />
+            </label>
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-2" aria-busy={convLoading}>
+            {convError && <div role="alert" className="m-2 rounded-lg border border-error/20 bg-error/5 p-3 text-xs leading-5 text-error">{convError === "Failed to load conversations" ? t("Failed to load conversations") : convError}<button onClick={() => void loadConversations(false)} className="mt-2 block font-semibold underline">{t("Try again")}</button></div>}
+            {convLoading && conversations.length === 0 ? (
+              <div className="space-y-2 p-2" aria-label={t("Loading…")}>{[0,1,2,3,4].map((i) => <div key={i} className="flex animate-pulse items-center gap-3 p-3"><div className="h-10 w-10 rounded-full bg-surface-hover"/><div className="flex-1 space-y-2"><div className="h-3 w-2/3 rounded bg-surface-hover"/><div className="h-3 w-full rounded bg-surface-hover"/></div></div>)}</div>
+            ) : visibleConversations.length === 0 ? (
+              <div className="px-6 py-14 text-center text-sm leading-6 text-muted">{search ? t("No conversations match your search.") : t("No conversations yet.")}</div>
+            ) : visibleConversations.map((c) => (
+              <button key={c.id} type="button" aria-pressed={c.id === activeId} onClick={() => openConversation(c.id)} className={`mb-1 flex w-full gap-3 rounded-xl p-3 text-left transition-colors ${c.id === activeId ? "bg-surface-hover" : "hover:bg-background"}`}>
+                <span aria-hidden="true" className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${c.id === activeId ? "bg-accent text-white" : "bg-background text-muted"}`}>{(c.contact.username ?? "?").slice(0, 1).toUpperCase()}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold">{c.detailsUnavailable ? t("Details unavailable") : `@${c.contact.username ?? "unknown"}`}</span><span className="shrink-0 text-[10px] text-muted">{formatTime(c.updatedTime, locale)}</span></span>
+                  <span className="mt-1 block truncate text-xs leading-5 text-muted">{c.detailsUnavailable ? t("Instagram could not load this conversation.") : c.lastMessage ? `${c.lastMessage.fromMe ? t("You: ") : ""}${c.lastMessage.text || t("(no text)")}` : t("No messages.")}</span>
                 </span>
-              </div>
+              </button>
+            ))}
+          </div>
+        </div>
 
-              <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
-                {active.detailsUnavailable ? (
-                  <p role="status" className="text-sm text-muted">
-                    {t("Instagram could not load the details of this conversation. Other conversations are still available. You can check this chat in Instagram.")}
-                  </p>
-                ) : threadLoading && messages.length === 0 ? (
-                  <p className="text-sm text-muted">{t("Loading…")}</p>
-                ) : messages.length === 0 ? (
-                  <p className="text-sm text-muted">{t("No messages.")}</p>
-                ) : (
-                  messages.map((m) => (
-                    <div
-                      key={m.id}
-                      className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[75%] rounded-lg px-3 py-2 text-sm ${
-                          m.fromMe
-                            ? "bg-accent text-white"
-                            : "bg-surface text-foreground border border-border"
-                        }`}
-                      >
-                        <p className="whitespace-pre-wrap break-words">{m.text}</p>
-                        <p
-                          className={`mt-1 text-[10px] ${
-                            m.fromMe ? "text-white/70" : "text-zinc-500"
-                          }`}
-                        >
-                          {formatTime(m.createdTime, locale)}
-                        </p>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="shrink-0 border-t border-border p-3">
-                {sendError && (
-                  <p className="mb-2 text-xs text-error">{sendError}</p>
-                )}
-                <div className="flex items-end gap-2">
-                  <textarea
-                    disabled={active.detailsUnavailable || !active.contact.id}
-                    value={draft}
-                    onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    rows={1}
-                    placeholder={t("Write a reply…  (Enter to send, Shift+Enter for a new line)")}
-                    className="max-h-32 min-h-[40px] flex-1 resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void handleSend()}
-                    disabled={sending || !draft.trim() || !active.contact.id || active.detailsUnavailable}
-                    className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-                  >
-                    {sending ? t("Sending…") : t("Send")}
-                  </button>
+        <div className={`min-h-0 min-w-0 flex-col ${active ? "flex" : "hidden md:flex"}`}>
+          {!active ? (
+            <div className="flex flex-1 flex-col items-center justify-center bg-background/70 p-8 text-center">
+              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-surface text-muted"><svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.3" className="h-7 w-7"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5A8.5 8.5 0 0 1 10.5 3h2a8.5 8.5 0 0 1 8.5 8.5Z"/><path d="M7 10h9M7 14h6"/></svg></div>
+              <h2 className="text-base font-semibold">{t("Conversations")}</h2>
+              <p className="mt-2 max-w-xs text-sm leading-6 text-muted">{t("Select a conversation to read and reply.")}</p>
+            </div>
+          ) : <>
+            <div className="flex shrink-0 items-center gap-3 border-b border-border px-4 py-4 sm:px-6">
+              <button type="button" onClick={() => { draftsRef.current[active.id] = draft; setActiveId(null); }} className="rounded-lg border border-border px-2 py-2 text-xs text-muted md:hidden" aria-label={t("Back to conversations")}>← {t("Back")}</button>
+              <span aria-hidden="true" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-hover text-sm font-semibold">{(active.contact.username ?? "?").slice(0,1).toUpperCase()}</span>
+              <div className="min-w-0"><h2 className="truncate text-sm font-semibold">{active.detailsUnavailable ? t("Details unavailable") : `@${active.contact.username ?? "unknown"}`}</h2><p className="mt-0.5 text-xs text-muted">Instagram</p></div>
+              <button type="button" onClick={() => void loadMessages(active.id, false)} disabled={threadLoading || active.detailsUnavailable} className="ml-auto text-xs font-medium text-muted hover:text-foreground disabled:opacity-40">{t("Refresh")}</button>
+            </div>
+            <div ref={scrollRef} onScroll={(e) => { const el = e.currentTarget; shouldScrollRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 100; }} className="min-h-0 flex-1 space-y-4 overflow-y-auto bg-background/60 px-4 py-6 sm:px-8" aria-busy={threadLoading}>
+              {threadError && <div role="alert" className="rounded-lg border border-error/20 bg-error/5 p-3 text-xs text-error">{threadError}<button onClick={() => void loadMessages(active.id, false)} className="ml-2 underline">{t("Try again")}</button></div>}
+              {active.detailsUnavailable ? <p role="status" className="rounded-xl border border-border bg-surface p-5 text-sm leading-6 text-muted">{t("Instagram could not load the details of this conversation. Other conversations are still available. You can check this chat in Instagram.")}</p> : threadLoading && messages.length === 0 ? <p className="py-8 text-center text-sm text-muted">{t("Loading…")}</p> : messages.length === 0 ? <p className="py-8 text-center text-sm text-muted">{t("No messages.")}</p> : messages.map((m) => (
+                <div key={m.id} className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[88%] rounded-2xl px-4 py-3 text-sm leading-6 sm:max-w-[75%] ${m.fromMe ? "rounded-br-md bg-accent text-white" : "rounded-bl-md border border-border bg-surface text-foreground"}`}>
+                    <p className="whitespace-pre-wrap break-words">{m.text || t("(no text)")}</p>
+                    <p className={`mt-1 text-right text-[10px] ${m.fromMe ? "text-white/65" : "text-muted"}`}>{m.id.startsWith("optimistic-") ? t("Sending…") : formatTime(m.createdTime, locale)}</p>
+                  </div>
                 </div>
+              ))}
+            </div>
+            <div className="shrink-0 border-t border-border p-4 sm:px-6">
+              {sendError && <p role="alert" className="mb-3 rounded-lg bg-error/5 p-3 text-xs text-error">{sendError}</p>}
+              <div className="flex items-end gap-3 rounded-xl border border-border bg-background p-2 focus-within:border-accent/40">
+                <textarea disabled={sending || active.detailsUnavailable || !active.contact.id} value={draft} onChange={(e) => { setDraft(e.target.value); draftsRef.current[active.id] = e.target.value; }} onKeyDown={handleKeyDown} rows={2} aria-label={t("Reply")} title={t("Write a reply…  (Enter to send, Shift+Enter for a new line)")} placeholder={t("Write a reply…")} className="max-h-40 min-h-[56px] min-w-0 flex-1 resize-y border-0 bg-transparent px-2 py-1 text-sm leading-6 text-foreground placeholder:text-muted outline-none disabled:opacity-50" />
+                <button type="button" onClick={() => void handleSend()} disabled={sending || !draft.trim() || !active.contact.id || active.detailsUnavailable} className="shrink-0 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-40">{sending ? t("Sending…") : t("Send")} <span aria-hidden="true">↗</span></button>
               </div>
-            </>
-          )}
+            </div>
+          </>}
         </div>
       </div>
+      ) : null}
     </div>
   );
 }

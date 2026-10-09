@@ -1,10 +1,10 @@
 .or-landing {
-  --or-paper: #faf9f6;
-  --or-ink: #22221f;
-  --or-muted: #62625e;
-  --or-line: #deded7;
-  --or-orange: #c4490c;
-  --or-peach: #f6e6d8;
+  --or-paper: #f7f8fa;
+  --or-ink: #20242a;
+  --or-muted: #667080;
+  --or-line: #e6e8ec;
+  --or-orange: #374b41;
+  --or-peach: #edf2ee;
   background: var(--or-paper);
   color: var(--or-ink);
   font-size: 16px;

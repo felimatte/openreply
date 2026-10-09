@@ -58,7 +58,7 @@ function formatDate(value: string, locale: string) {
 }
 
 function EmptyState({ label }: { label: string }) {
-  return <p className="py-5 text-center text-sm text-muted">{label}</p>;
+  return <p className="flex items-center gap-3 rounded-xl bg-background/70 px-4 py-5 text-sm text-muted"><span aria-hidden="true" className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10 text-success">✓</span>{label}</p>;
 }
 
 function Section({
@@ -69,7 +69,7 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="panel rounded p-4 sm:p-6">
+    <section className="panel rounded-2xl p-5 sm:p-6">
       <h2 className="text-base font-semibold text-foreground">{title}</h2>
       <div className="mt-4">{children}</div>
     </section>
@@ -80,28 +80,35 @@ export default function DiagnosticsPage() {
   const { t, label, locale } = useI18n();
   const [data, setData] = useState<DiagnosticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   async function refreshDiagnostics() {
     setLoading(true);
-    const response = await fetch("/api/admin/diagnostics");
-    const payload = await response.json();
-    if (payload.success) {
-      setData(payload.data);
+    try {
+      const response = await fetch("/api/admin/diagnostics");
+      const payload = await response.json();
+      if (!response.ok || !payload.success) throw new Error(payload.error ?? t("Something went wrong. Try again."));
+      setData(payload.data); setError(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : t("Something went wrong. Try again."));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   useEffect(() => {
     let active = true;
 
     async function loadInitialDiagnostics() {
-      const response = await fetch("/api/admin/diagnostics");
-      const payload = await response.json();
-      if (active && payload.success) {
-        setData(payload.data);
-      }
-      if (active) {
-        setLoading(false);
+      try {
+        const response = await fetch("/api/admin/diagnostics");
+        const payload = await response.json();
+        if (!response.ok || !payload.success) throw new Error(payload.error ?? t("Something went wrong. Try again."));
+        if (active) setData(payload.data);
+      } catch (cause) {
+        if (active) setError(cause instanceof Error ? cause.message : t("Something went wrong. Try again."));
+      } finally {
+        if (active) setLoading(false);
       }
     }
 
@@ -110,10 +117,10 @@ export default function DiagnosticsPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [t]);
 
   if (loading && !data) {
-    return <div className="panel rounded p-8 h-64" />;
+    return <div aria-label={t("Loading…")} className="mx-auto max-w-5xl space-y-6"><div className="h-9 w-64 animate-pulse rounded-lg bg-surface-hover"/><div className="h-40 animate-pulse rounded-2xl bg-surface-hover"/><div className="h-64 animate-pulse rounded-2xl bg-surface-hover"/></div>;
   }
 
   const workerAgeSeconds =
@@ -125,7 +132,7 @@ export default function DiagnosticsPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">
             {t("Production Diagnostics")}
           </h1>
           <p className="mt-1 text-sm text-muted">
@@ -134,14 +141,19 @@ export default function DiagnosticsPage() {
         </div>
         <button
           onClick={() => void refreshDiagnostics()}
-          className="rounded border border-border bg-surface px-4 py-2 text-sm font-semibold text-foreground transition hover:border-border-hover"
+          disabled={loading}
+          className="rounded-lg border border-border bg-surface px-4 py-2.5 text-sm font-medium text-foreground transition hover:border-border-hover disabled:opacity-40"
         >
-          {t("Refresh")}
+          {loading ? t("Loading…") : t("Refresh")}
         </button>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3">
-        <div className="panel rounded p-4 sm:p-5">
+      {error && <div role="alert" className="rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error">{error}</div>}
+
+      {data && <>
+
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
+        <div className="panel col-span-2 rounded-2xl p-4 sm:p-5 lg:col-span-1">
           <p className="text-xs font-semibold uppercase text-muted">
             {t("Worker health")}
           </p>
@@ -159,7 +171,7 @@ export default function DiagnosticsPage() {
           </p>
         </div>
         {["waiting", "active", "delayed", "failed"].map((key) => (
-          <div key={key} className="panel rounded p-4 sm:p-5">
+          <div key={key} className="panel rounded-2xl p-4 sm:p-5">
             <p className="text-xs font-semibold uppercase text-muted">
               {t("Queue")} {label(key)}
             </p>
@@ -284,6 +296,7 @@ export default function DiagnosticsPage() {
           <EmptyState label={t("No operational events recorded.")} />
         )}
       </Section>
+      </>}
     </div>
   );
 }
