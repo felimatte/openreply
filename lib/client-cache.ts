@@ -12,13 +12,26 @@ interface Entry<T> {
   ts: number;
 }
 
+// Set only by the mounted browser dashboard boundary, before its children mount.
+let workspaceStorageScope = "unselected";
+
+export function setClientWorkspaceScope(userId: string, workspaceId: string): () => void {
+  const previous = workspaceStorageScope;
+  workspaceStorageScope = `${encodeURIComponent(userId)}:${encodeURIComponent(workspaceId)}`;
+  return () => { workspaceStorageScope = previous; };
+}
+
+export function getWorkspaceStorageKey(key: string): string {
+  return `openreply:v1:${workspaceStorageScope}:${key}`;
+}
+
 export function readCache<T>(
   key: string,
   maxAgeMs: number
 ): { data: T | null; stale: boolean } {
   if (typeof window === "undefined") return { data: null, stale: true };
   try {
-    const raw = window.sessionStorage.getItem(key);
+    const raw = window.sessionStorage.getItem(getWorkspaceStorageKey(key));
     if (!raw) return { data: null, stale: true };
     const entry = JSON.parse(raw) as Entry<T>;
     return { data: entry.data, stale: Date.now() - entry.ts > maxAgeMs };
@@ -31,7 +44,7 @@ export function writeCache<T>(key: string, data: T): void {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(
-      key,
+      getWorkspaceStorageKey(key),
       JSON.stringify({ data, ts: Date.now() })
     );
   } catch {

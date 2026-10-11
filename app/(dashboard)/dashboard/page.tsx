@@ -1,12 +1,14 @@
 "use client";
 
 import { useI18n } from "@/lib/i18n/provider";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import AppIcon from "@/components/app-icon";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import StatCard from "@/components/stat-card";
 import StatusBadge from "@/components/status-badge";
+import { WorkspaceConnectLink } from "@/components/workspace-connect-link";
 
 interface DashboardStats {
   userName: string | null;
@@ -38,12 +40,17 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
+  return <Suspense fallback={null}><DashboardContent /></Suspense>;
+}
+
+function DashboardContent() {
   const { t, label, locale } = useI18n();
+  const searchParams = useSearchParams();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [selectedAccountId, setSelectedAccountId] = useState("all");
+  const [selectedAccountId, setSelectedAccountId] = useState(searchParams.get("instagramAccountId") ?? "all");
 
   useEffect(() => {
     const controller = new AbortController();
@@ -108,7 +115,7 @@ export default function DashboardPage() {
         {connectedCount === 0 && (
           <div className="panel flex flex-col items-start justify-between gap-5 p-6 sm:flex-row sm:items-center">
             <div><h2 className="font-semibold">{t("Connect Instagram")}</h2><p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">{t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")}</p></div>
-            <a href="/api/instagram/connect" className="shrink-0 rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white">{t("Connect Instagram")} <span aria-hidden="true">↗</span></a>
+            <WorkspaceConnectLink className="shrink-0 rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-white">{t("Connect Instagram")} <span aria-hidden="true">↗</span></WorkspaceConnectLink>
           </div>
         )}
 

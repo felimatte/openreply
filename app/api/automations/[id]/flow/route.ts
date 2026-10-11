@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/client";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 import { createDefaultFlow, flowDefinitionSchema, validateFlowDefinition, type FlowDefinition } from "@/lib/flows/definition";
 import { getFlowCapabilities } from "@/lib/flows/capabilities";
+import { isCampaignReservedForMusaPublication } from "@/lib/integrations/musa/publications-reservation";
 
 export const dynamic = "force-dynamic";
 type Context = { params: Promise<{ id: string }> };
@@ -93,6 +94,8 @@ export async function POST(request: NextRequest, context: Context) {
     return NextResponse.json({ success: true, data: { definition: version.definition, revision: expectedRevision + 1 } });
   }
   if (body.action !== "publish") return failure("Acción no reconocida.", 400);
+  if (await isCampaignReservedForMusaPublication(campaign.id, user.workspaceId))
+    return failure("Esta campaña está reservada por una publicación de MUSA. Esperá su confirmación.", 409);
   const definition = body.definition ?? campaign.flowDraft;
   const validation = validateFlowDefinition(definition);
   if (!validation.valid) return NextResponse.json({ success: false, error: "Completá el flujo antes de publicar.", issues: validation.issues }, { status: 400 });

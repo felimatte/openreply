@@ -26,6 +26,7 @@ export default async function LoginPage({
     callbackUrl?: string;
     template?: string;
     preview?: string;
+    musa?: string;
   }>;
 }) {
   const { t } = await getI18n();
@@ -63,7 +64,10 @@ export default async function LoginPage({
   const templateCallbackUrl = selectedTemplate
     ? `/campaigns/new?template=${selectedTemplate.slug}`
     : null;
-  const callbackUrl = params.callbackUrl ?? templateCallbackUrl ?? "/dashboard";
+  const requestedCallback = params.callbackUrl;
+  const callbackUrl = requestedCallback?.startsWith("/") && !requestedCallback.startsWith("//") && !/[\\\r\n]/.test(requestedCallback)
+    ? requestedCallback
+    : templateCallbackUrl ?? "/dashboard";
 
   async function sendMagicLink(formData: FormData) {
     "use server";
@@ -86,6 +90,7 @@ export default async function LoginPage({
         </div>
 
         <DemoNotice variant="panel" />
+        {params.musa === "access_required" && <p role="alert" className="mb-5 rounded-lg border border-border bg-surface px-4 py-3 text-sm leading-relaxed text-muted">{t("Sign in with your own OpenReply account that belongs to the selected workspace. Ask its administrator for access if needed.")}</p>}
         {params.preview === "1" && <p role="status" className="mb-5 rounded-lg border border-border bg-surface px-4 py-3 text-sm leading-relaxed text-muted">{t("You are leaving the demo. Sign in to access your workspace and real campaigns.")}</p>}
 
         <div className="panel p-6 sm:p-9">

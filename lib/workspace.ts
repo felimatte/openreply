@@ -1,5 +1,14 @@
 import { prisma } from "@/lib/db/client";
 import type { Workspace, WorkspaceRole } from "@/app/generated/prisma/client";
+import { acceptWorkspaceInvitation } from "@/lib/auth-admission";
+import { isEmailAllowedToSignIn } from "@/lib/env";
+
+export class WorkspaceAccessRequiredError extends Error {
+  constructor() {
+    super("An active workspace invitation or membership is required");
+    this.name = "WorkspaceAccessRequiredError";
+  }
+}
 
 function normalizeInviteEmail(email: string) {
   return email.trim().toLowerCase();
@@ -22,31 +31,7 @@ export async function acceptPendingInvitationsForUser(
   });
 
   for (const invitation of invitations) {
-    await prisma.$transaction([
-      prisma.workspaceMember.upsert({
-        where: {
-          workspaceId_userId: {
-            workspaceId: invitation.workspaceId,
-            userId,
-          },
-        },
-        create: {
-          workspaceId: invitation.workspaceId,
-          userId,
-          role: invitation.role,
-        },
-        update: {
-          role: invitation.role,
-        },
-      }),
-      prisma.workspaceInvitation.update({
-        where: { id: invitation.id },
-        data: {
-          status: "ACCEPTED",
-          acceptedAt: now,
-        },
-      }),
-    ]);
+    await acceptWorkspaceInvitation(invitation.id, userId, normalizedEmail);
   }
 }
 
@@ -77,6 +62,12 @@ export async function ensureWorkspaceForUser(
   const existingMembership = await getWorkspaceMembership(userId);
   if (existingMembership) {
     return existingMembership.workspace;
+  }
+
+  // Invitation-only users must not acquire an independent workspace after
+  // their invitation expires or their last membership is removed.
+  if (!isEmailAllowedToSignIn(email?.trim().toLowerCase())) {
+    throw new WorkspaceAccessRequiredError();
   }
 
   const workspaceName = email ? `${email.split("@")[0]}'s workspace` : "My workspace";

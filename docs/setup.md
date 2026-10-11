@@ -105,7 +105,7 @@ Copy `.env.example` to `.env` for local work, or set these in Vercel and Railway
 | `REDIS_URL` | Redis connection string. Must support blocking commands, so an HTTP-only Redis will not work with BullMQ. |
 | `RESEND_API_KEY` | Resend key. Login is email magic links only, so without this nobody can sign in. |
 | `EMAIL_FROM` | A sender on a domain you verified in Resend. The placeholder will not deliver. |
-| `ALLOWED_EMAILS` | Optional. Comma-separated allowlist of addresses that may sign in, case insensitive. Unset, anyone who reaches your public URL can request a magic link and gets their own workspace, which is worth closing on an instance you run for yourself. |
+| `ALLOWED_EMAILS` | Optional. Case-insensitive, comma-separated allowlist controlling independent signups. Workspace owners/admins can also invite clients outside the list: a pending, unexpired invitation requires its issuer to remain an owner/admin in that workspace, or an existing ADMIN/MEMBER membership must belong to a workspace owned by another user. A previously created personal workspace does not bypass the allowlist. Every person still verifies their own email with a magic link. Unset, signup remains open. |
 | `EMAIL_SERVER` | Optional. An SMTP URL, for example `smtps://login%40example.com:password@mail.example.com:465`. Set it to send magic links through your own mail server instead of Resend; then `RESEND_API_KEY` is not needed. URL-encode special characters in the user and password (`@` becomes `%40`). Port 465 with `smtps://` is implicit TLS, port 587 with `smtp://` is STARTTLS. |
 
 **Direct Meta only.** Leave these unset if all accounts use Zernio:

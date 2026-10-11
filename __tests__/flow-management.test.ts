@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { createDefaultFlow } from "@/lib/flows/definition";
 
+const musaReservation = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/integrations/musa/publications-reservation", () => ({ isCampaignReservedForMusaPublication: musaReservation }));
+
 const mocks = vi.hoisted(() => ({ context: vi.fn(), automation: { findFirst: vi.fn(), updateMany: vi.fn(), update: vi.fn() }, version: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() }, run: { findMany: vi.fn(), groupBy: vi.fn(), updateMany: vi.fn() }, step: { groupBy: vi.fn() }, link: { groupBy: vi.fn() }, field: { upsert: vi.fn() }, transaction: vi.fn() }));
 vi.mock("@/lib/workspace-access", () => ({ getCurrentWorkspaceContext: mocks.context, canManageWorkspace: (role: string) => role === "OWNER" || role === "ADMIN" }));
 vi.mock("@/lib/db/client", () => ({ prisma: { automation: mocks.automation, flowVersion: mocks.version, flowRun: mocks.run, flowStepRun: mocks.step, flowLink: mocks.link, contactField: mocks.field, $transaction: mocks.transaction } }));
@@ -12,6 +15,7 @@ function request(body: unknown, method = "POST") { return new NextRequest("https
 describe("flow publishing and access", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    musaReservation.mockResolvedValue(false);
     mocks.context.mockResolvedValue({ workspaceId: "workspace_a", role: "ADMIN" });
     mocks.automation.findFirst.mockResolvedValue({ id: "campaign_a", workspaceId: "workspace_a", instagramAccountId: "account_a", instagramAccount: { provider: "META" }, pendingNextReel: false, flowDraftRevision: 0 });
     mocks.automation.updateMany.mockResolvedValue({ count: 1 });
@@ -38,6 +42,12 @@ describe("flow publishing and access", () => {
     expect(response.status).toBe(200);
     expect(mocks.version.create).toHaveBeenCalledWith({ data: expect.objectContaining({ version: 3, definition: graph, automationId: "campaign_a", workspaceId: "workspace_a" }) });
     expect(mocks.automation.update).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({ flowEnabled: true, flowPublishedVersionId: "version_3" }) }));
+  });
+  it("cannot activate a campaign reserved by an in-flight MUSA publication", async () => {
+    musaReservation.mockResolvedValue(true);
+    expect((await POST(request({ action: "publish", definition: createDefaultFlow(), expectedRevision: 0 }), context)).status).toBe(409);
+    expect(mocks.version.create).not.toHaveBeenCalled();
+    expect(mocks.automation.update).not.toHaveBeenCalled();
   });
   it("arms a resumed campaign from its new activation rather than an old paused wait", async () => {
     mocks.automation.findFirst.mockResolvedValue({ id: "campaign_a", workspaceId: "workspace_a", instagramAccountId: "account_a", instagramAccount: { provider: "META" }, isActive: false, pendingNextReel: true, nextReelArmedAt: new Date("2020-01-01"), flowDraftRevision: 0 });

@@ -23,6 +23,8 @@ model User {
   ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
   workspaceMembers  WorkspaceMember[]
   sentInvitations   WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
+  musaConnections   MusaConnection[]
+  musaPairingCodes  MusaPairingCode[]
 }
 
 model Account {
@@ -68,6 +70,8 @@ model Workspace {
   id        String   @id @default(cuid())
   name      String
   ownerId   String
+  /// Permanent tenant binding: revoking MUSA access does not change the client.
+  musaBusinessId String?
   owner     User     @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -92,8 +96,46 @@ model Workspace {
   flowVersions      FlowVersion[]
   flowRuns          FlowRun[]
   flowAssets        FlowAsset[]
+  musaConnections   MusaConnection[]
+  musaPairingCodes  MusaPairingCode[]
 
   @@index([ownerId])
+}
+
+/// A revocable grant from an OpenReply administrator to exactly one MUSA business.
+/// Credentials are stored only as SHA-256 hashes; account scope never expands implicitly.
+model MusaConnection {
+  id                String @id @default(cuid())
+  workspaceId       String
+  businessId        String
+  businessName      String
+  grantedByUserId   String
+  allowedAccountIds String[]
+  tokenHash         String @unique
+  createdAt         DateTime @default(now())
+  revokedAt         DateTime?
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  grantedBy         User @relation(fields: [grantedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, revokedAt])
+  @@index([grantedByUserId])
+  @@index([businessId])
+}
+
+model MusaPairingCode {
+  id                String @id @default(cuid())
+  workspaceId       String
+  grantedByUserId   String
+  allowedAccountIds String[]
+  codeHash          String @unique
+  expiresAt         DateTime
+  consumedAt        DateTime?
+  createdAt         DateTime @default(now())
+  workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  grantedBy         User @relation(fields: [grantedByUserId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, expiresAt])
+  @@index([grantedByUserId])
 }
 
 model WorkspaceMember {
@@ -722,4 +764,37 @@ model PendingReelComment {
   @@unique([accountId, commentId])
   @@index([accountId, mediaId])
   @@index([expiresAt])
+}
+
+/// Durable publication receipt, retained after revoking a MUSA connection.
+model MusaPublication {
+  id                  String @id @default(cuid())
+  connectionId        String
+  workspaceId         String
+  publicationId       String @unique @db.Uuid
+  accountId           String
+  provider            InstagramProvider
+  payloadHash         String
+  payload             Json
+  status              String @default("processing")
+  stage               String @default("PREPARE")
+  campaignId          String? @unique
+  campaignUpdatedAt   DateTime?
+  containerId         String?
+  providerPostId      String?
+  providerScheduledAt DateTime?
+  mediaId             String?
+  permalink           String?
+  errorCode           String?
+  leaseToken          String?
+  leaseUntil          DateTime?
+  nextAttemptAt       DateTime?
+  attemptStartedAt    DateTime?
+  publishedAt         DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([connectionId, publicationId])
+  @@index([workspaceId, accountId])
+  @@index([status, leaseUntil])
 }

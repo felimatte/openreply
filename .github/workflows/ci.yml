@@ -8,8 +8,26 @@ on:
 
 jobs:
   test:
-    name: TypeScript checks
+    name: TypeScript and integration checks
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: openreply_musa_qa
+        ports:
+          - "57322:5432"
+        options: >-
+          --health-cmd "pg_isready -U postgres -d openreply_musa_qa"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:57322/openreply_musa_qa
 
     steps:
       - name: Checkout
@@ -26,8 +44,9 @@ jobs:
 
       - name: Generate Prisma client
         run: npm run db:generate
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instrareply
+
+      - name: Apply migrations to disposable PostgreSQL
+        run: npm run db:migrate
 
       - name: Typecheck
         run: npm run typecheck
@@ -37,11 +56,12 @@ jobs:
 
       - name: Run tests
         run: npm test
+        env:
+          MUSA_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:57322/openreply_musa_qa
 
       - name: Build
         run: npm run build
         env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/instrareply
           REDIS_URL: redis://localhost:6379
           NEXTAUTH_URL: http://localhost:3000
           NEXTAUTH_SECRET: test-secret-for-ci-build

@@ -10,6 +10,7 @@ import {
   verifyOAuthState,
 } from "@/lib/meta/oauth";
 import { canManageWorkspace } from "@/lib/workspace-access";
+import { SELECTED_WORKSPACE_COOKIE } from "@/lib/workspace-selection";
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -41,6 +42,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.redirect(`${baseUrl}/settings?instagram=forbidden`);
   }
 
+  const publishingAccount = state.publication
+    ? await prisma.instagramAccount.findFirst({
+      where: { id: state.publication.accountId, workspaceId: state.workspaceId, provider: "META" },
+      select: { id: true, instagramId: true },
+    })
+    : null;
+  if (state.publication && !publishingAccount) {
+    return NextResponse.redirect(`${baseUrl}/settings?instagram=forbidden`);
+  }
+
   try {
     const redirectUri = `${baseUrl}/api/instagram/callback`;
     const { accessToken: shortLivedToken } = await exchangeCodeForToken(
@@ -55,6 +66,9 @@ export async function GET(request: NextRequest) {
     // can be matched back to this account. Fall back to id if user_id is
     // ever absent.
     const instagramId = userInfo.user_id ?? userInfo.id;
+    if (publishingAccount && publishingAccount.instagramId !== instagramId) {
+      return NextResponse.redirect(`${baseUrl}/settings?instagram=account_mismatch`);
+    }
     const connection = await canConnectInstagramAccount({
       workspaceId: state.workspaceId,
       instagramId,
@@ -90,6 +104,22 @@ export async function GET(request: NextRequest) {
       tokenExpiresAt,
       webhookSubscribed,
     };
+    if (publishingAccount) {
+      // Recheck the original local account after the remote OAuth calls. If it
+      // was removed or moved meanwhile, do not create or replace a connection.
+      const updated = await prisma.instagramAccount.updateMany({
+        where: { id: publishingAccount.id, instagramId, workspaceId: state.workspaceId, provider: "META" },
+        data,
+      });
+      if (!updated.count) return NextResponse.redirect(`${baseUrl}/settings?instagram=forbidden`);
+      const response = NextResponse.redirect(`${baseUrl}/settings?instagram=publishing_reconnected`);
+      response.headers.set("Cache-Control", "no-store");
+      response.cookies.set(SELECTED_WORKSPACE_COOKIE, state.workspaceId, {
+        httpOnly: true, secure: new URL(baseUrl).protocol === "https:",
+        sameSite: "lax", path: "/", maxAge: 30 * 86400,
+      });
+      return response;
+    }
     const existing = await prisma.instagramAccount.findUnique({ where: { instagramId } });
     if (existing) {
       const updated = await prisma.instagramAccount.updateMany({

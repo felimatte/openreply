@@ -1,4 +1,5 @@
 "use client";
+import { WorkspaceConnectLink } from "@/components/workspace-connect-link";
 
 /**
  * Instagram Overview Page
@@ -99,12 +100,11 @@ export default function OverviewPage() {
         <p className="text-sm text-error">{error === "Failed to load overview" ? t("Failed to load overview") : error}</p>
         <button type="button" onClick={() => { setLoading(true); setRetry((value) => value + 1); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium">{t("Try again")}</button>
         {error.includes("connect") && (
-          <a
-            href="/api/instagram/connect"
+          <WorkspaceConnectLink
             className="mt-4 inline-block text-sm text-accent hover:underline"
           >
             {t("Connect Instagram")}
-          </a>
+          </WorkspaceConnectLink>
         )}
       </div>
     );
@@ -180,12 +180,11 @@ export default function OverviewPage() {
           <p className="text-sm text-muted mt-1">
             {t("Reconnect your account to grant it — likes and comments are shown in the meantime.")}
           </p>
-          <a
-            href="/api/instagram/connect"
+          <WorkspaceConnectLink
             className="mt-3 inline-block text-sm text-accent hover:underline"
           >
             {t("Reconnect Instagram")}
-          </a>
+          </WorkspaceConnectLink>
         </div>
       )}
 

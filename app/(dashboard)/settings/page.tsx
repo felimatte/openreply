@@ -7,6 +7,9 @@ import type { AccountOption } from "@/components/account-select";
 import { ZernioConnection } from "@/components/zernio-connection";
 import { InstagramConnectNotice } from "@/components/instagram-connect-notice";
 import { ContactSyncSettings } from "@/components/contact-sync-settings";
+import { MusaConnectionSettings } from "@/components/musa-connection-settings";
+import { WorkspaceConnectLink } from "@/components/workspace-connect-link";
+import { WorkspaceSettings } from "@/components/workspace-settings";
 
 interface SettingsData {
   workspace: {
@@ -176,8 +179,10 @@ export default function SettingsPage() {
       <div className="grid items-start gap-6 lg:grid-cols-[180px_minmax(0,1fr)]">
       <nav aria-label={t("Settings")} className="sticky top-0 z-10 flex gap-1 overflow-x-auto rounded-xl border border-border bg-surface p-2 lg:top-8 lg:flex-col lg:border-0 lg:bg-transparent lg:p-0">
         {([
+          ["workspaces", "Client workspaces"],
           ["connections", "Instagram Connection"],
           ["google-sheets", "Google Sheets"],
+          ["musa", "MUSA"],
           ["team", "Team"],
           ["preferences", "Preferences"],
           ["usage", "Usage"],
@@ -190,6 +195,8 @@ export default function SettingsPage() {
       <Suspense fallback={null}>
         <InstagramConnectNotice />
       </Suspense>
+
+      <WorkspaceSettings />
 
       <section id="connections" className="panel scroll-mt-24 rounded-2xl p-5 sm:p-7">
         <h2 className="text-base font-semibold mb-6">{t("Instagram Connection")}</h2>
@@ -263,12 +270,11 @@ export default function SettingsPage() {
         </div>
 
         <div className="mt-4 flex flex-wrap gap-3 border-t border-border pt-5">
-          <a
-            href="/api/instagram/connect"
+          <WorkspaceConnectLink
             className="rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover"
           >
             {t("Connect using your own Meta app")}
-          </a>
+          </WorkspaceConnectLink>
         </div>
       </section>
 
@@ -278,6 +284,7 @@ export default function SettingsPage() {
       </details>
 
       <ContactSyncSettings canManage={canManageMembers} />
+      <MusaConnectionSettings accounts={accounts} canManage={canManageMembers} />
 
       <section id="team" className="panel scroll-mt-24 rounded-2xl p-5 sm:p-7">
         <h2 className="text-base font-semibold mb-6">{t("Team")}</h2>

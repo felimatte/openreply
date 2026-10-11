@@ -5,6 +5,7 @@ import { flowDefinitionSchema, validateFlowDefinition } from "@/lib/flows/defini
 import { z } from "zod";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
+import { isCampaignReservedForMusaPublication } from "@/lib/integrations/musa/publications-reservation";
 import { calculateCtr, normalizeTopKeywords } from "@/lib/tracking/analytics";
 import { buildTrackedUrl } from "@/lib/tracking/message";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
@@ -566,6 +567,10 @@ export async function PATCH(request: NextRequest) {
     ...automationData
   } = parsed.data;
 
+  if (await isCampaignReservedForMusaPublication(automationId, workspaceId)) {
+    return NextResponse.json({ success: false, error: "Esta campaña está reservada por una publicación de MUSA. Esperá su confirmación." }, { status: 409 });
+  }
+
   const contactSettings = await resolveCampaignContactSettings(workspaceId, {
     dmMessage: automationData.dmMessage ?? existing.dmMessage,
     askEnabled,
@@ -681,6 +686,9 @@ export async function DELETE(request: NextRequest) {
     );
   }
 
+  if (await isCampaignReservedForMusaPublication(automationId, workspaceId)) {
+    return NextResponse.json({ success: false, error: "Esta campaña está reservada por una publicación de MUSA. Esperá su confirmación." }, { status: 409 });
+  }
   await prisma.automation.delete({ where: { id: automationId } });
 
   return NextResponse.json({ success: true, data: { deleted: true } });
