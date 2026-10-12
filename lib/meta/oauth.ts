@@ -19,9 +19,15 @@ const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
 const STATE_MAX_AGE_MS = 10 * 60 * 1000;
 
+export interface OAuthPublicationTarget {
+  purpose: "publish";
+  accountId: string;
+}
+
 interface OAuthStatePayload {
   workspaceId: string;
   ts: number;
+  publication?: OAuthPublicationTarget;
 }
 
 function base64UrlEncode(value: string): string {
@@ -38,9 +44,9 @@ function signState(payload: string): string {
     .digest("base64url");
 }
 
-export function createOAuthState(workspaceId: string): string {
+export function createOAuthState(workspaceId: string, publication?: OAuthPublicationTarget): string {
   const payload = base64UrlEncode(
-    JSON.stringify({ workspaceId, ts: Date.now() } satisfies OAuthStatePayload)
+    JSON.stringify({ workspaceId, ts: Date.now(), ...(publication ? { publication } : {}) } satisfies OAuthStatePayload)
   );
   return `${payload}.${signState(payload)}`;
 }
@@ -48,8 +54,8 @@ export function createOAuthState(workspaceId: string): string {
 export function verifyOAuthState(state: string | null): OAuthStatePayload | null {
   if (!state) return null;
 
-  const [payload, signature] = state.split(".");
-  if (!payload || !signature) return null;
+  const [payload, signature, extra] = state.split(".");
+  if (!payload || !signature || extra !== undefined) return null;
 
   const expected = signState(payload);
   const signatureBuffer = Buffer.from(signature);
@@ -64,9 +70,18 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 
   try {
     const parsed = JSON.parse(base64UrlDecode(payload)) as OAuthStatePayload;
-    if (!parsed.workspaceId || Date.now() - parsed.ts > STATE_MAX_AGE_MS) {
+    if (
+      typeof parsed.workspaceId !== "string" || !parsed.workspaceId ||
+      typeof parsed.ts !== "number" || !Number.isFinite(parsed.ts) ||
+      parsed.ts > Date.now() || Date.now() - parsed.ts > STATE_MAX_AGE_MS
+    ) {
       return null;
     }
+    if (parsed.publication !== undefined && (
+      !parsed.publication || parsed.publication.purpose !== "publish" ||
+      typeof parsed.publication.accountId !== "string" ||
+      !parsed.publication.accountId || parsed.publication.accountId.length > 128
+    )) return null;
 
     return parsed;
   } catch {
@@ -74,12 +89,20 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
   }
 }
 
-export function getAuthorizationUrl(redirectUri: string, state: string): string {
+export function getAuthorizationUrl(redirectUri: string, state: string, includePublishing: boolean = false): string {
+  // Publishing is a separate opt-in: an unapproved publishing permission must
+  // not break the existing messaging/comment/insights connection flow.
+  const scopes = [
+    "instagram_business_basic",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_comments",
+    "instagram_business_manage_insights",
+  ];
+  if (includePublishing) scopes.push("instagram_business_content_publish");
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
-    scope:
-      "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_manage_insights",
+    scope: scopes.join(","),
     response_type: "code",
     state,
   });

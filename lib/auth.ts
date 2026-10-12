@@ -3,8 +3,9 @@ import Nodemailer from "next-auth/providers/nodemailer";
 import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/db/client";
-import { ensureWorkspaceForUser, getPrimaryWorkspace } from "@/lib/workspace";
-import { isEmailAllowedToSignIn } from "@/lib/env";
+import { ensureWorkspaceForUser } from "@/lib/workspace";
+import { resolveUserWorkspace } from "@/lib/workspace-selection";
+import { isEmailAdmittedToSignIn } from "@/lib/auth-admission";
 
 type AdapterPrismaClient = Parameters<typeof PrismaAdapter>[0];
 
@@ -34,7 +35,7 @@ export const authConfig = {
     // Runs before the magic link is sent, so a blocked address never receives
     // one, and again when the link is verified.
     async signIn({ user }) {
-      return isEmailAllowedToSignIn(user?.email);
+      return isEmailAdmittedToSignIn(user?.email);
     },
     async session({ session, user }) {
       if (session.user) {
@@ -72,14 +73,6 @@ export async function getCurrentWorkspaceId(): Promise<string | null> {
   const userId = await getCurrentUserId();
   if (!userId) return null;
 
-  const workspace = await getPrimaryWorkspace(userId);
-  if (workspace) return workspace.id;
-
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { email: true },
-  });
-
-  const createdWorkspace = await ensureWorkspaceForUser(userId, user?.email);
-  return createdWorkspace.id;
+  const membership = await resolveUserWorkspace(userId);
+  return membership?.workspaceId ?? null;
 }

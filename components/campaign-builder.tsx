@@ -25,7 +25,7 @@ import { createDefaultFlow, parseFlowDefinition, validateFlowDefinition, type Fl
 import { campaignEntryIssues } from "@/components/flows/campaign-entry";
 import FlowIcon from "@/components/flows/flow-icon";
 import "@/components/flows/campaign-creation.css";
-import { readCache, writeCache } from "@/lib/client-cache";
+import { getWorkspaceStorageKey, readCache, writeCache } from "@/lib/client-cache";
 import {
   IMPORT_QUEUE_KEY,
   IMPORT_ACCOUNT_KEY,
@@ -446,8 +446,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   useEffect(() => {
     if (mode !== "new") return;
     try {
-      const raw = window.localStorage.getItem(IMPORT_QUEUE_KEY);
-      const acct = window.localStorage.getItem(IMPORT_ACCOUNT_KEY);
+      const raw = window.localStorage.getItem(getWorkspaceStorageKey(IMPORT_QUEUE_KEY));
+      const acct = window.localStorage.getItem(getWorkspaceStorageKey(IMPORT_ACCOUNT_KEY));
       if (!raw) return;
       const queue = JSON.parse(raw) as ImportRow[];
       if (!Array.isArray(queue) || queue.length === 0) return;
@@ -619,7 +619,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           const remaining = importQueue.slice(1);
           try {
             window.localStorage.setItem(
-              IMPORT_QUEUE_KEY,
+              getWorkspaceStorageKey(IMPORT_QUEUE_KEY),
               JSON.stringify(remaining)
             );
           } catch {
@@ -633,8 +633,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         }
         if (importQueue) {
           try {
-            window.localStorage.removeItem(IMPORT_QUEUE_KEY);
-            window.localStorage.removeItem(IMPORT_ACCOUNT_KEY);
+            window.localStorage.removeItem(getWorkspaceStorageKey(IMPORT_QUEUE_KEY));
+            window.localStorage.removeItem(getWorkspaceStorageKey(IMPORT_ACCOUNT_KEY));
           } catch {
             // ignore
           }
@@ -673,7 +673,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     if (importQueue.length > 1) {
       const remaining = importQueue.slice(1);
       try {
-        window.localStorage.setItem(IMPORT_QUEUE_KEY, JSON.stringify(remaining));
+        window.localStorage.setItem(getWorkspaceStorageKey(IMPORT_QUEUE_KEY), JSON.stringify(remaining));
       } catch {
         // ignore
       }
@@ -684,8 +684,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     }
     // Last row skipped — finish the import.
     try {
-      window.localStorage.removeItem(IMPORT_QUEUE_KEY);
-      window.localStorage.removeItem(IMPORT_ACCOUNT_KEY);
+      window.localStorage.removeItem(getWorkspaceStorageKey(IMPORT_QUEUE_KEY));
+      window.localStorage.removeItem(getWorkspaceStorageKey(IMPORT_ACCOUNT_KEY));
     } catch {
       // ignore
     }

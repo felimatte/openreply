@@ -15,6 +15,7 @@ import Link from "next/link";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import { parseCsv } from "@/lib/utils/csv";
 import { IMPORT_QUEUE_KEY, IMPORT_ACCOUNT_KEY } from "@/lib/import-queue";
+import { getWorkspaceStorageKey } from "@/lib/client-cache";
 
 const SAMPLE = `keywords,dm_message,public_reply,tracked_url,opening_dm,opening_dm_button
 "yc","here it is: {link}","sent. check dms","https://events.ycombinator.com/startup-school-2026","hey! click below for the referral","send link"
@@ -74,9 +75,9 @@ export default function ImportCampaignsPage() {
     }
 
     try {
-      window.localStorage.setItem(IMPORT_QUEUE_KEY, JSON.stringify(rows));
+      window.localStorage.setItem(getWorkspaceStorageKey(IMPORT_QUEUE_KEY), JSON.stringify(rows));
       if (selectedAccountId) {
-        window.localStorage.setItem(IMPORT_ACCOUNT_KEY, selectedAccountId);
+        window.localStorage.setItem(getWorkspaceStorageKey(IMPORT_ACCOUNT_KEY), selectedAccountId);
       }
     } catch {
       setError(t("Could not stage the import in this browser."));

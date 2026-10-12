@@ -13,6 +13,16 @@ const TONE_CLASSES: Record<Tone, string> = {
 };
 
 const MESSAGES: Record<string, { tone: Tone; title: StaticMessageKey; detail: StaticMessageKey }> = {
+  account_mismatch: {
+    tone: "error",
+    title: "Different Instagram account",
+    detail: "Choose the same Instagram account shown in MUSA settings.",
+  },
+  publishing_reconnected: {
+    tone: "success",
+    title: "Instagram reconnected",
+    detail: "Publishing permissions will be checked for this account.",
+  },
   denied: {
     tone: "warning",
     title: "Instagram connection cancelled",

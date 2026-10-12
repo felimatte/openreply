@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
-import { readCache, writeCache } from "@/lib/client-cache";
+import { getWorkspaceStorageKey, readCache, writeCache } from "@/lib/client-cache";
 import type { ConversationListItem } from "@/app/api/instagram/conversations/route";
 import type { ThreadMessage } from "@/app/api/instagram/conversations/[id]/route";
 
@@ -48,7 +48,7 @@ export default function InboxPage() {
   // conversation list immediately, before the account list even loads.
   const [selectedAccountId, setSelectedAccountId] = useState(() => {
     if (typeof window === "undefined") return "";
-    return window.sessionStorage.getItem("inbox:selectedAccount") ?? "";
+    return window.sessionStorage.getItem(getWorkspaceStorageKey("inbox:selectedAccount")) ?? "";
   });
 
   const [conversations, setConversations] = useState<ConversationListItem[]>([]);
@@ -114,7 +114,7 @@ export default function InboxPage() {
   // Remember the chosen account for the next visit.
   useEffect(() => {
     if (typeof window === "undefined" || !selectedAccountId) return;
-    window.sessionStorage.setItem("inbox:selectedAccount", selectedAccountId);
+    window.sessionStorage.setItem(getWorkspaceStorageKey("inbox:selectedAccount"), selectedAccountId);
   }, [selectedAccountId]);
 
   const loadConversations = useCallback(

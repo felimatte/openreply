@@ -80,8 +80,9 @@ export async function isPublicDemoHost(): Promise<boolean> {
  * A self-hosted instance on a public domain is open to signup: the email
  * provider creates an account for whoever asks for a magic link, and that
  * account gets its own workspace. ALLOWED_EMAILS closes it to a comma-separated
- * list of addresses. Left unset, sign-in behaves exactly as before, so an
- * existing deployment is unaffected.
+ * list of addresses for independent signup. Auth admission separately permits
+ * legitimate workspace invitees and members. Left unset, sign-in behaves
+ * exactly as before, so an existing deployment is unaffected.
  */
 export function isEmailAllowedToSignIn(
   email: string | null | undefined

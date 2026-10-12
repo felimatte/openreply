@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 import { normalizeInvitationEmail } from "@/lib/workspace-invitations";
+import { acceptWorkspaceInvitation } from "@/lib/auth-admission";
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -50,26 +51,8 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  await prisma.$transaction([
-    prisma.workspaceMember.upsert({
-      where: {
-        workspaceId_userId: {
-          workspaceId: invitation.workspaceId,
-          userId: session.user.id,
-        },
-      },
-      create: {
-        workspaceId: invitation.workspaceId,
-        userId: session.user.id,
-        role: invitation.role,
-      },
-      update: { role: invitation.role },
-    }),
-    prisma.workspaceInvitation.update({
-      where: { id: invitation.id },
-      data: { status: "ACCEPTED", acceptedAt: new Date() },
-    }),
-  ]);
+  const accepted = await acceptWorkspaceInvitation(invitation.id, session.user.id, session.user.email);
+  if (!accepted) return NextResponse.json({ success: false, error: "Invitation is no longer available" }, { status: 403 });
 
   return NextResponse.json({
     success: true,
