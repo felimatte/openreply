@@ -11,12 +11,15 @@ Promise<{ canPublish: boolean; publishUnavailableReason: string | null }> {
   try {
     const context = await createInstagramContext(account);
     if (context.provider === "META") {
-      const raw = await publicationProviderRequest(context, "/me/permissions", { timeoutMs: 2000 });
-      const result = z.object({ data: z.array(z.object({ permission: z.string(), status: z.string() })) }).safeParse(raw);
+      // Instagram Login requires both basic and content_publish for this read-only endpoint.
+      const raw = await publicationProviderRequest(context,
+        `/${encodeURIComponent(account.instagramId)}/content_publishing_limit?fields=quota_usage,config`, { timeoutMs: 2000 });
+      const result = z.object({ data: z.array(z.object({
+        quota_usage: z.number().int().nonnegative(),
+        config: z.object({ quota_total: z.number().int().nonnegative() }),
+      })).min(1) }).safeParse(raw);
       if (!result.success) return unavailable("PERMISSIONS_UNAVAILABLE");
-      const granted = new Set(result.data.data.filter((p) => p.status === "granted").map((p) => p.permission));
-      if (!granted.has("instagram_business_content_publish") || !granted.has("instagram_business_basic"))
-        return unavailable("PUBLISH_PERMISSION_REQUIRED");
+      // Exhausted quota still proves authorization; the publication pipeline checks capacity.
     } else {
       const raw = await publicationProviderRequest(context, `/accounts/${encodeURIComponent(context.accountId)}/health`, { timeoutMs: 2000 });
       const result = z.object({ tokenStatus: z.object({ valid: z.boolean() }), permissions: z.object({ canPost: z.boolean() }) }).safeParse(raw);

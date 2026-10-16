@@ -9,8 +9,11 @@ const meta = { provider: "META" as const, accessToken: "test-token-never-real" }
 const zernio = { provider: "ZERNIO" as const, accountId: "remote-a", instagramId: "ig-a", apiKey: "test-key-never-real" };
 const account = { provider: "META" as const, accessToken: "encrypted-fixture", workspaceId: "workspace-a", instagramId: "ig-a", zernioAccountId: null };
 const input = { accountId: "account-a", caption: "QA", videoUrl: "https://cdn.example.com/a.mp4", coverUrl: "https://cdn.example.com/cover.jpg" };
-beforeEach(() => { vi.resetAllMocks(); vi.stubGlobal("fetch", fetchMock); contextMock.mockResolvedValue(meta); });
-afterEach(() => vi.unstubAllGlobals());
+beforeEach(() => {
+  vi.resetAllMocks(); vi.stubGlobal("fetch", fetchMock); vi.stubEnv("META_GRAPH_API_VERSION", "v25.0");
+  contextMock.mockResolvedValue(meta);
+});
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("publication provider boundary", () => {
   it("sends Meta credentials only in the header and creates a Reel container", async () => {
@@ -57,17 +60,95 @@ describe("publication provider boundary", () => {
 });
 
 describe("real publishing capability", () => {
-  it("requires a granted publication scope, not just a connected token", async () => {
-    fetchMock.mockResolvedValue(Response.json({ data: [{ permission: "instagram_business_basic", status: "granted" }] }));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PUBLISH_PERMISSION_REQUIRED" });
-  });
-  it("accepts both granted Meta scopes", async () => {
-    fetchMock.mockResolvedValue(Response.json({ data: ["instagram_business_basic", "instagram_business_content_publish"].map((permission) => ({ permission, status: "granted" })) }));
+  it("probes the account's documented scope-protected quota endpoint using one GET", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    fetchMock.mockResolvedValue(Response.json({ data: [{ quota_usage: 2, config: { quota_total: 50, quota_duration: 86400 } }] }));
     expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: true, publishUnavailableReason: null });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, options] = fetchMock.mock.calls[0];
+    expect(url).toBe("https://graph.instagram.com/v25.0/ig-a/content_publishing_limit?fields=quota_usage,config");
+    expect(url).not.toContain(meta.accessToken);
+    expect(options).toMatchObject({ method: "GET", cache: "no-store", redirect: "error",
+      headers: { Authorization: `Bearer ${meta.accessToken}` } });
+    expect(options.body).toBeUndefined();
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(2000);
+  });
+  it("encodes the stored account ID without accepting a different endpoint", async () => {
+    fetchMock.mockResolvedValue(Response.json({ data: [{ quota_usage: 0, config: { quota_total: 100 } }] }));
+    expect((await getMusaPublishingCapability({ ...account, instagramId: "ig/a?fields=private" })).canPublish).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://graph.instagram.com/v25.0/ig%2Fa%3Ffields%3Dprivate/content_publishing_limit?fields=quota_usage,config");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([[50, 50], [51, 50], [0, 0]])("keeps authorization separate from exhausted quota (%i of %i)", async (usage, total) => {
+    fetchMock.mockResolvedValue(Response.json({ data: [{ quota_usage: usage, config: { quota_total: total } }] }));
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: true, publishUnavailableReason: null });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+  });
+  it.each([400, 401, 403, 429, 500, 503])("keeps HTTP %i closed without retrying or leaking provider content", async (status) => {
+    fetchMock.mockResolvedValue(Response.json({ error: { message: `private ${meta.accessToken}`, code: 190 } }, { status }));
+    const result = await getMusaPublishingCapability(account);
+    expect(result).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(JSON.stringify(result)).not.toContain(meta.accessToken);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+  });
+  it.each([
+    {}, { data: [] }, { data: null },
+    { data: [{ permission: "instagram_business_content_publish", status: "granted" }] },
+    { data: [{ quota_usage: "2", config: { quota_total: 50 } }] },
+    { data: [{ quota_usage: -1, config: { quota_total: 50 } }] },
+    { data: [{ quota_usage: 0.5, config: { quota_total: 50 } }] },
+    { data: [{ quota_usage: 2 }] },
+    { data: [{ quota_usage: 2, config: {} }] },
+    { data: [{ quota_usage: 2, config: { quota_total: "50" } }] },
+    { data: [{ quota_usage: 2, config: { quota_total: -1 } }] },
+    { data: [{ quota_usage: 2, config: { quota_total: 1.5 } }] },
+  ])("rejects an invalid or missing quota response: %j", async (body) => {
+    fetchMock.mockResolvedValue(Response.json(body));
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("rejects an unreadable provider response", async () => {
+    fetchMock.mockResolvedValue(new Response("not JSON", { status: 200 }));
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each([
+    { ...account, accessToken: "" },
+    { ...account, tokenExpiresAt: new Date(0) },
+  ])("requires live stored credentials before any provider read", async (unavailableAccount) => {
+    expect(await getMusaPublishingCapability(unavailableAccount)).toEqual({ canPublish: false, publishUnavailableReason: "RECONNECT_REQUIRED" });
+    expect(contextMock).not.toHaveBeenCalled(); expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("does not call a provider if the stored credential cannot be decrypted", async () => {
+    contextMock.mockRejectedValue(new Error(`private ${meta.accessToken}`));
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
   it("does not advertise unavailable permissions as working", async () => {
     fetchMock.mockRejectedValue(new Error("upstream unavailable"));
     expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("stays closed when its two-second signal aborts without retrying", async () => {
+    const controller = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let started!: () => void;
+    const fetching = new Promise<void>((resolve) => { started = resolve; });
+    fetchMock.mockImplementation((_url: string, options: RequestInit) => {
+      started();
+      return new Promise((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+      });
+    });
+    const capability = getMusaPublishingCapability(account);
+    await fetching;
+    controller.abort(new DOMException("private timeout", "TimeoutError"));
+    expect(await capability).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(2000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("uses Zernio's token validity and canPost capability", async () => {
     contextMock.mockResolvedValue(zernio);
