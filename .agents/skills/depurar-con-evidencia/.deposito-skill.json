@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "project": "marca-openreply-base",
+  "skill": "depurar-con-evidencia",
+  "agent": "codex",
+  "files": {
+    "LICENSE.upstream": "a37e0e9697144819e1d965176ac4ae5bc3fa02d11e7812036bbcadf6dafe2400",
+    "PROCEDENCIA.md": "ce6aee7a4dfb56b5158394fd95fc0867ad0065ace1745686b12de83868b8c3fa",
+    "SKILL.md": "aa0831746c05acd3a75867cb6f15ab3787ce1bb8ee078d541f66801770c6cd22"
+  },
+  "assignedAt": "2026-10-18T14:49:37.734292+00:00",
+  "operation": "a9105b2949384dcb8f3577db17761e75"
+}
