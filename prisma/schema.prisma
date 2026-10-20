@@ -781,6 +781,7 @@ model MusaPublication {
   campaignId          String? @unique
   campaignUpdatedAt   DateTime?
   containerId         String?
+  confirmationContainerId String?
   providerPostId      String?
   providerScheduledAt DateTime?
   mediaId             String?
