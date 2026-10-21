@@ -19,15 +19,78 @@ export function musaPublicationResult(row: MusaPublication) {
   return { version: 1 as const, publicationId: row.publicationId,
     status: row.status as "processing" | "published" | "failed" | "uncertain",
     mediaId: row.mediaId, permalink: row.permalink, errorCode: row.errorCode,
+    ...(row.status === "published" && row.provider === "META" && !row.mediaId && !row.permalink
+      && row.confirmationContainerId && /^[a-zA-Z0-9_-]{1,128}$/.test(row.confirmationContainerId)
+      && row.confirmationContainerId === row.containerId
+      ? { confirmation: { source: "meta_container" as const, containerId: row.confirmationContainerId, status: "PUBLISHED" as const } } : {}),
     retryAfterSeconds: row.status === "processing"
       ? Math.max(1, Math.ceil((Math.max(row.nextAttemptAt?.getTime() ?? 0, row.leaseUntil?.getTime() ?? 0) - Date.now()) / 1000)) : null };
 }
 
-export async function getMusaPublication(context: MusaConnectionContext, publicationId: string) {
+async function loadMusaPublication(context: MusaConnectionContext, publicationId: string) {
   const row = await prisma.musaPublication.findFirst({ where: scope(context, publicationId) });
   if (!row) throw new MusaIntegrationError(404, "PUBLICATION_NOT_FOUND", "Publication not found");
   requireMusaAccount(context, row.accountId);
-  return musaPublicationResult(row);
+  return row;
+}
+
+/** A receipt may read an exact saved container, but can never publish or create one. */
+export async function getMusaPublication(context: MusaConnectionContext, publicationId: string) {
+  const row = await loadMusaPublication(context, publicationId);
+  const unfinished = row.status === "processing" || row.status === "uncertain";
+  const finalize = row.stage === "FINALIZE" && Boolean(row.mediaId);
+  const container = row.provider === "META" && Boolean(row.containerId && /^[a-zA-Z0-9_-]{1,128}$/.test(row.containerId))
+    && (row.stage === "META_PUBLISHING" || row.stage === "META_PROCESSING" && row.status === "uncertain");
+  if (unfinished && (finalize || container)) await reconcileMusaPublication(context, row);
+  return musaPublicationResult(await loadMusaPublication(context, publicationId));
+}
+
+async function confirmMetaContainer(row: MusaPublication, leaseToken: string) {
+  await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken, status: row.status,
+    stage: row.stage, provider: "META", containerId: row.containerId, mediaId: null }, data: {
+    status: "published", stage: "DONE", confirmationContainerId: row.containerId,
+    mediaId: null, permalink: null, publishedAt: new Date(), nextAttemptAt: null,
+    errorCode: row.campaignId ? "CAMPAIGN_BINDING_CONFLICT" : null,
+  } });
+}
+
+async function reconcileMusaPublication(context: MusaConnectionContext, row: MusaPublication) {
+  const now = new Date();
+  const leaseToken = randomUUID();
+  const acquired = await prisma.musaPublication.updateMany({ where: {
+    ...scope(context, row.publicationId), id: row.id, accountId: row.accountId, provider: row.provider,
+    status: row.status, stage: row.stage, containerId: row.containerId, mediaId: row.mediaId,
+    AND: [{ OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] },
+      { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] }],
+  }, data: { leaseToken, leaseUntil: new Date(now.getTime() + LEASE_MS),
+    nextAttemptAt: new Date(now.getTime() + 60_000) } });
+  if (!acquired.count) return;
+  try {
+    if (row.stage === "FINALIZE" && row.mediaId) {
+      let permalink = row.permalink;
+      if (!permalink && row.provider === "META") {
+        try {
+          const provider = await createInstagramContext(requireMusaAccount(context, row.accountId));
+          permalink = await metaMediaPermalink(provider, row.mediaId);
+        } catch { permalink = null; }
+      }
+      await finishPublication(row, leaseToken, permalink);
+    } else {
+      const provider = await createInstagramContext(requireMusaAccount(context, row.accountId));
+      if (provider.provider !== "META" || !row.containerId) throw new MusaProviderError("PROVIDER_ACCOUNT_MISMATCH");
+      const status = await metaContainerStatus(provider, row.containerId);
+      if (status === "PUBLISHED") await confirmMetaContainer(row, leaseToken);
+      else await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken, status: { in: ["processing", "uncertain"] } },
+        data: { status: "uncertain", errorCode: "PUBLICATION_CONFIRMATION_REQUIRED" } });
+    }
+  } catch (error) {
+    // Losing read access does not prove failure, nor allow another publication.
+    await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken, status: { in: ["processing", "uncertain"] } }, data: {
+      status: "uncertain", errorCode: error instanceof MusaProviderError ? error.code : "PUBLICATION_CONFIRMATION_REQUIRED",
+    } });
+  } finally {
+    await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken }, data: { leaseToken: null, leaseUntil: null } });
+  }
 }
 
 async function ensurePublication(context: MusaConnectionContext, publicationId: string, payload: MusaPublicationInput) {
@@ -74,7 +137,7 @@ async function assertCampaignUnchanged(row: MusaPublication) {
 async function finishPublication(row: MusaPublication, leaseToken: string, permalink: string | null) {
   return prisma.$transaction(async (tx) => {
     const saved = await tx.musaPublication.updateMany({ where: { id: row.id, leaseToken }, data: {
-      status: "published", stage: "DONE", permalink, publishedAt: new Date(), errorCode: null,
+      status: "published", stage: "DONE", permalink, publishedAt: new Date(), errorCode: null, confirmationContainerId: null, nextAttemptAt: null,
     } });
     if (!saved.count) return;
     if (row.campaignId) {
@@ -100,7 +163,7 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
     AND: [{ OR: [{ leaseUntil: null }, { leaseUntil: { lte: now } }] },
       { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] }] },
     data: { leaseToken, leaseUntil: new Date(now.getTime() + LEASE_MS) } });
-  if (!acquired.count) return getMusaPublication(context, publicationId);
+  if (!acquired.count) return musaPublicationResult(await loadMusaPublication(context, publicationId));
   let current = (await prisma.musaPublication.findUnique({ where: { id: row.id } }))!;
   const save = async (data: Prisma.MusaPublicationUpdateManyMutationInput) => {
     const result = await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken },
@@ -132,7 +195,7 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
         const status = await metaContainerStatus(provider, current.containerId);
         if (status === "FINISHED") await save({ stage: "META_QUOTA", nextAttemptAt: null });
         else if (status === "ERROR" || status === "EXPIRED") throw new MusaProviderError(`MEDIA_${status}`);
-        else if (status === "PUBLISHED") await save({ status: "uncertain", errorCode: "PUBLICATION_CONFIRMATION_REQUIRED" });
+        else if (status === "PUBLISHED") await confirmMetaContainer(current, leaseToken);
         else await wait(60);
       } else if (current.stage === "META_QUOTA") {
         if (await metaPublishingQuota(provider, account.instagramId)) await save({ stage: "META_READY", nextAttemptAt: null });
@@ -187,5 +250,5 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
   } finally {
     await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken }, data: { leaseToken: null, leaseUntil: null } });
   }
-  return getMusaPublication(context, publicationId);
+  return musaPublicationResult(await loadMusaPublication(context, publicationId));
 }

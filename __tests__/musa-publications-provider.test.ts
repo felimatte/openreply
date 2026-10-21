@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const contextMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: contextMock }));
 import { getMusaPublishingCapability } from "@/lib/integrations/musa/publications-capabilities";
-import { createMetaContainer, createZernioPublication, publicationProviderRequest, readZernioPublication } from "@/lib/integrations/musa/publications-provider";
+import { createMetaContainer, createZernioPublication, metaContainerStatus, publicationProviderRequest, readZernioPublication } from "@/lib/integrations/musa/publications-provider";
 
 const fetchMock = vi.fn();
 const meta = { provider: "META" as const, accessToken: "test-token-never-real" };
@@ -154,5 +154,37 @@ describe("real publishing capability", () => {
     contextMock.mockResolvedValue(zernio);
     fetchMock.mockResolvedValue(Response.json({ tokenStatus: { valid: true }, permissions: { canPost: false } }));
     expect(await getMusaPublishingCapability({ ...account, provider: "ZERNIO", zernioAccountId: "remote-a" })).toEqual({ canPublish: false, publishUnavailableReason: "PUBLISH_PERMISSION_REQUIRED" });
+  });
+});
+
+describe("exact Meta container confirmation", () => {
+  it("queries the saved container once with GET and no body", async () => {
+    fetchMock.mockResolvedValue(Response.json({ id: "container-a", status_code: "PUBLISHED" }));
+    expect(await metaContainerStatus(meta, "container-a")).toBe("PUBLISHED");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("https://graph.instagram.com/v25.0/container-a?fields=status_code");
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ method: "GET", cache: "no-store" });
+    expect(fetchMock.mock.calls[0][1].body).toBeUndefined();
+  });
+  it.each([
+    { id: "other-container", status_code: "PUBLISHED" },
+    { status_code: "PUBLISHED" },
+    { id: "container-a", status_code: "UNKNOWN" },
+  ])("rejects an unknown status or a different/missing container ID: %j", async body => {
+    fetchMock.mockResolvedValue(Response.json(body));
+    await expect(metaContainerStatus(meta, "container-a")).rejects.toMatchObject({
+      code: "PROVIDER_INVALID_RESPONSE", ambiguous: false,
+    });
+  });
+  it("keeps the same deadline while reading the response body", async () => {
+    const controller = new AbortController();
+    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    let reading!: () => void;
+    const started = new Promise<void>(resolve => { reading = resolve; });
+    fetchMock.mockResolvedValue({ ok: true, json: () => { reading(); return new Promise(() => {}); } });
+    const request = publicationProviderRequest(meta, "/ig-a/media_publish", { method: "POST" });
+    await started;
+    controller.abort(new DOMException("private body timeout", "TimeoutError"));
+    await expect(request).rejects.toMatchObject({ code: "PROVIDER_UNREACHABLE", ambiguous: true });
   });
 });

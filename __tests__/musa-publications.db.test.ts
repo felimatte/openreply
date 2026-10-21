@@ -4,15 +4,16 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vites
 import type { InstagramAccount } from "@/app/generated/prisma/client";
 import type { MusaConnectionContext } from "@/lib/integrations/musa/auth";
 
-const remote = vi.hoisted(() => ({ create: vi.fn(), publish: vi.fn(), capability: vi.fn(), context: vi.fn(), permalink: vi.fn() }));
+const remote = vi.hoisted(() => ({ create: vi.fn(), publish: vi.fn(), pollMeta: vi.fn(), capability: vi.fn(), context: vi.fn(), permalink: vi.fn() }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: remote.context }));
 vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPublishingCapability: remote.capability }));
 vi.mock("@/lib/integrations/musa/publications-provider", async (original) => ({
   ...await original<typeof import("@/lib/integrations/musa/publications-provider")>(),
-  createMetaContainer: remote.create, publishMetaContainer: remote.publish, metaMediaPermalink: remote.permalink,
+  createMetaContainer: remote.create, publishMetaContainer: remote.publish, metaContainerStatus: remote.pollMeta, metaMediaPermalink: remote.permalink,
 }));
 import { prisma } from "@/lib/db/client";
-import { advanceMusaPublication } from "@/lib/integrations/musa/publications";
+import { advanceMusaPublication, getMusaPublication } from "@/lib/integrations/musa/publications";
+import { isCampaignReservedForMusaPublication } from "@/lib/integrations/musa/publications-reservation";
 
 const databaseUrl = process.env.MUSA_TEST_DATABASE_URL;
 describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", () => {
@@ -45,6 +46,7 @@ describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", 
     remote.capability.mockResolvedValue({ canPublish: true, publishUnavailableReason: null });
     remote.context.mockResolvedValue({ provider: "META", accessToken: "not-real" });
     remote.create.mockResolvedValue("qa-container"); remote.publish.mockResolvedValue("qa-media");
+    remote.pollMeta.mockResolvedValue("PUBLISHED");
     remote.permalink.mockResolvedValue("https://www.instagram.com/reel/qa-confirmed/");
   });
   afterAll(async () => {
@@ -116,6 +118,55 @@ describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", 
     } });
     expect((await advanceMusaPublication(context, id, body())).status).toBe("uncertain");
     expect(remote.publish).not.toHaveBeenCalled();
+  });
+  it("a confirmed container keeps its paused campaign reserved even without a media ID", async () => {
+    const campaign = await makeCampaign(); const id = randomUUID();
+    await advanceMusaPublication(context, id, { ...body(), campaignId: campaign.id });
+    await prisma.musaPublication.update({ where: { publicationId: id }, data: {
+      status: "uncertain", stage: "META_PUBLISHING", containerId: "qa-container",
+    } });
+    expect(await getMusaPublication(context, id)).toMatchObject({ status: "published", mediaId: null,
+      confirmation: { source: "meta_container", containerId: "qa-container", status: "PUBLISHED" },
+      errorCode: "CAMPAIGN_BINDING_CONFLICT" });
+    expect(await isCampaignReservedForMusaPublication(campaign.id, workspaceId)).toBe(true);
+    await expect(prisma.automation.update({ where: { id: campaign.id }, data: { isActive: true } })).rejects.toThrow();
+    await expect(prisma.automation.update({ where: { id: campaign.id }, data: { postId: "unrelated" } })).rejects.toThrow();
+    await expect(prisma.automation.update({ where: { id: campaign.id }, data: { pendingNextReel: false } })).rejects.toThrow();
+    await expect(prisma.automation.delete({ where: { id: campaign.id } })).rejects.toThrow();
+    expect(await prisma.automation.findUniqueOrThrow({ where: { id: campaign.id } })).toMatchObject({
+      isActive: false, postId: null, pendingNextReel: true,
+    });
+    await getMusaPublication(context, id);
+    expect(remote.pollMeta).toHaveBeenCalledTimes(1);
+    expect(remote.publish).not.toHaveBeenCalled();
+  });
+  it("database accepts only an exact Meta container proof for publication without a media ID", async () => {
+    const id = randomUUID(); await advanceMusaPublication(context, id, body());
+    const where = { publicationId: id };
+    await expect(prisma.musaPublication.update({ where, data: { status: "published" } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      status: "published", confirmationContainerId: "qa-container",
+    } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      status: "published", containerId: "other-container", confirmationContainerId: "qa-container",
+    } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      status: "published", provider: "ZERNIO", containerId: "qa-container", confirmationContainerId: "qa-container",
+    } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      status: "processing", containerId: "qa-container", confirmationContainerId: "qa-container",
+    } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      status: "published", mediaId: "qa-media", containerId: "qa-container", confirmationContainerId: "qa-container",
+    } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      status: "published", permalink: "https://www.instagram.com/reel/guessed/",
+      containerId: "qa-container", confirmationContainerId: "qa-container",
+    } })).rejects.toThrow();
+    await prisma.musaPublication.update({ where, data: {
+      status: "published", containerId: "qa-container", confirmationContainerId: "qa-container",
+    } });
+    expect((await prisma.musaPublication.findUniqueOrThrow({ where })).mediaId).toBeNull();
   });
   it("a new grant cannot reuse an already consumed publication UUID", async () => {
     const id = randomUUID(); await advanceMusaPublication(context, id, body());

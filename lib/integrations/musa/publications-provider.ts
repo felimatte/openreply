@@ -18,16 +18,18 @@ export async function publicationProviderRequest(
     ? `https://graph.instagram.com/${getMetaGraphApiVersion()}` : "https://zernio.com/api/v1";
   const credential = context.provider === "META" ? context.accessToken : context.apiKey;
   let response: Response;
+  let body: unknown;
+  const signal = AbortSignal.timeout(options.timeoutMs ?? 3500);
   try {
     response = await fetch(`${base}${path}`, {
       method, headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json",
         ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}) },
       ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
-      cache: "no-store", redirect: "error", signal: AbortSignal.timeout(options.timeoutMs ?? 3500),
+      cache: "no-store", redirect: "error", signal,
     });
+    body = await providerJson(response, signal);
   } catch { throw new MusaProviderError("PROVIDER_UNREACHABLE", method === "POST", true); }
   // Provider errors can contain credentials and request URLs. Never persist them.
-  const body: unknown = await response.json().catch(() => null);
   if (!response.ok) {
     if (response.status === 429) throw new MusaProviderError("PROVIDER_RATE_LIMIT", false, true);
     if (response.status === 401 || response.status === 403) throw new MusaProviderError("RECONNECT_REQUIRED");
@@ -43,6 +45,20 @@ export async function publicationProviderRequest(
   return body;
 }
 
+async function providerJson(response: Response, signal: AbortSignal): Promise<unknown> {
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    const body: unknown = await Promise.race([response.json().catch(() => null), interrupted]);
+    signal.throwIfAborted();
+    return body;
+  } finally { signal.removeEventListener("abort", abort); }
+}
+
 const remoteId = z.object({ id: z.string().min(1) });
 export async function createMetaContainer(context: InstagramContext, instagramId: string, input: MusaPublicationInput) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
@@ -56,8 +72,8 @@ export async function createMetaContainer(context: InstagramContext, instagramId
 
 export async function metaContainerStatus(context: InstagramContext, containerId: string) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(containerId)}?fields=status_code`);
-  const parsed = z.object({ status_code: z.enum(["IN_PROGRESS", "FINISHED", "ERROR", "EXPIRED", "PUBLISHED"]) }).safeParse(raw);
-  if (!parsed.success) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", false, true);
+  const parsed = z.object({ id: z.string(), status_code: z.enum(["IN_PROGRESS", "FINISHED", "ERROR", "EXPIRED", "PUBLISHED"]) }).safeParse(raw);
+  if (!parsed.success || parsed.data.id !== containerId) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", false, true);
   return parsed.data.status_code;
 }
 

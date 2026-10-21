@@ -32,7 +32,7 @@ let stored: MusaPublication | null;
 function record(extra: Partial<MusaPublication> = {}): MusaPublication {
   return { id: "receipt-a", connectionId: context.connectionId, workspaceId: context.workspaceId, publicationId,
     accountId: input.accountId, provider: "META", payloadHash: publicationPayloadHash(input), payload: input,
-    status: "processing", stage: "READY", campaignId: null, campaignUpdatedAt: null, containerId: null,
+    status: "processing", stage: "READY", campaignId: null, campaignUpdatedAt: null, containerId: null, confirmationContainerId: null,
     providerPostId: null, providerScheduledAt: null, mediaId: null, permalink: null, errorCode: null,
     leaseToken: null, leaseUntil: null, nextAttemptAt: null, attemptStartedAt: null,
     publishedAt: null, createdAt: baseTime, updatedAt: baseTime, ...extra };
@@ -193,5 +193,148 @@ describe("publication policy", () => {
   });
   it.each(["http://cdn.example.com/a.mp4", "https://localhost/a.mp4", "https://127.0.0.1/a.mp4", "https://[::1]/a.mp4", "https://user:pass@cdn.example.com/a.mp4"])("rejects unsafe media URL %s", (videoUrl) => {
     expect(musaPublicationInputSchema.safeParse({ ...input, videoUrl }).success).toBe(false);
+  });
+});
+
+describe("safe receipt reconciliation", () => {
+  it("recovers a lost publish response from the exact container, with one POST total", async () => {
+    stored = record({ stage: "META_READY", containerId: "container-a" });
+    mocks.publishMeta.mockRejectedValue(new MusaProviderError("PROVIDER_UNREACHABLE", true, true));
+    expect(await advanceMusaPublication(context, publicationId, input)).toMatchObject({ status: "uncertain" });
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    const result = await getMusaPublication(context, publicationId);
+    expect(result).toMatchObject({ status: "published", mediaId: null, permalink: null, errorCode: null,
+      confirmation: { source: "meta_container", containerId: "container-a", status: "PUBLISHED" } });
+    await getMusaPublication(context, publicationId);
+    await advanceMusaPublication(context, publicationId, input);
+    expect(mocks.publishMeta).toHaveBeenCalledTimes(1);
+    expect(mocks.createMeta).not.toHaveBeenCalled();
+    expect(mocks.pollMeta).toHaveBeenCalledExactlyOnceWith(expect.anything(), "container-a");
+  });
+  it("does not query or steal an active publishing lease", async () => {
+    stored = record({ stage: "META_PUBLISHING", containerId: "container-a", leaseToken: "active",
+      leaseUntil: new Date(baseTime.getTime() + 30_000) });
+    expect((await getMusaPublication(context, publicationId)).status).toBe("processing");
+    expect(mocks.pollMeta).not.toHaveBeenCalled();
+    expect(stored?.leaseToken).toBe("active");
+    vi.setSystemTime(new Date(baseTime.getTime() + 31_000));
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    expect((await getMusaPublication(context, publicationId)).status).toBe("published");
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("a receipt cannot interfere with a PUT actively awaiting its publish response", async () => {
+    stored = record({ stage: "META_READY", containerId: "container-a" });
+    let release!: (id: string) => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    mocks.publishMeta.mockImplementation(() => { entered(); return new Promise<string>(resolve => { release = resolve; }); });
+    const publishing = advanceMusaPublication(context, publicationId, input);
+    await started;
+    expect((await getMusaPublication(context, publicationId)).status).toBe("processing");
+    await advanceMusaPublication(context, publicationId, input);
+    expect(mocks.pollMeta).not.toHaveBeenCalled();
+    expect(mocks.publishMeta).toHaveBeenCalledTimes(1);
+    release("media-a");
+    expect((await publishing).status).toBe("processing");
+    expect(mocks.permalink).not.toHaveBeenCalled();
+    expect((await getMusaPublication(context, publicationId)).status).toBe("published");
+    expect(mocks.publishMeta).toHaveBeenCalledTimes(1);
+  });
+  it("overlapping GET and PUT calls only make one remote read, never a publish", async () => {
+    stored = record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a" });
+    let release!: (status: string) => void;
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    mocks.pollMeta.mockImplementation(() => { entered(); return new Promise<string>(resolve => { release = resolve; }); });
+    const first = getMusaPublication(context, publicationId);
+    await started;
+    expect((await getMusaPublication(context, publicationId)).status).toBe("uncertain");
+    expect((await advanceMusaPublication(context, publicationId, input)).status).toBe("uncertain");
+    release("PUBLISHED");
+    expect((await first).status).toBe("published");
+    expect(mocks.pollMeta).toHaveBeenCalledTimes(1);
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+    expect(mocks.createMeta).not.toHaveBeenCalled();
+  });
+  it("keeps campaign pause and reservation when its exact media ID is unavailable", async () => {
+    stored = record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a",
+      campaignId: "campaign-a", campaignUpdatedAt: baseTime });
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({
+      status: "published", mediaId: null, errorCode: "CAMPAIGN_BINDING_CONFLICT",
+    });
+    expect(stored?.campaignId).toBe("campaign-a");
+    expect(mocks.campaign.updateMany).not.toHaveBeenCalled();
+  });
+  it.each(["FINISHED", "IN_PROGRESS", "ERROR", "EXPIRED"])("does not infer a publication from %s and respects cooldown", async status => {
+    stored = record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a" });
+    mocks.pollMeta.mockResolvedValue(status);
+    expect((await getMusaPublication(context, publicationId)).status).toBe("uncertain");
+    await getMusaPublication(context, publicationId);
+    expect(mocks.pollMeta).toHaveBeenCalledTimes(1);
+    expect(stored?.confirmationContainerId).toBeNull();
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("does not turn a failed or malformed read into published or failed", async () => {
+    stored = record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a" });
+    mocks.pollMeta.mockRejectedValue(new MusaProviderError("PROVIDER_INVALID_RESPONSE", false, true));
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({ status: "uncertain", errorCode: "PROVIDER_INVALID_RESPONSE" });
+    expect(stored?.confirmationContainerId).toBeNull();
+    vi.setSystemTime(new Date(baseTime.getTime() + 61_000));
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    expect((await getMusaPublication(context, publicationId)).status).toBe("published");
+  });
+  it("recovers an uncertain META_PROCESSING container without creating another", async () => {
+    stored = record({ status: "uncertain", stage: "META_PROCESSING", containerId: "container-a" });
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    expect((await getMusaPublication(context, publicationId)).status).toBe("published");
+    expect(mocks.createMeta).not.toHaveBeenCalled();
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("can finish a known media ID from GET without a publish", async () => {
+    stored = record({ stage: "FINALIZE", mediaId: "media-a" });
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({
+      status: "published", mediaId: "media-a", permalink: "https://www.instagram.com/reel/confirmed/",
+    });
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+    expect(mocks.pollMeta).not.toHaveBeenCalled();
+    expect(stored?.confirmationContainerId).toBeNull();
+  });
+  it("finishes a known exact media ID even if its optional permalink cannot be read", async () => {
+    stored = record({ stage: "FINALIZE", mediaId: "media-a" });
+    mocks.context.mockRejectedValue(new Error("credential unavailable"));
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({
+      status: "published", mediaId: "media-a", permalink: null,
+    });
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it.each([
+    { containerId: null }, { containerId: "../container" }, { stage: "META_CREATING" }, { status: "failed" },
+  ])("never invents a missing or ineligible saved container: %j", async extra => {
+    stored = record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a", ...extra });
+    await getMusaPublication(context, publicationId);
+    expect(mocks.pollMeta).not.toHaveBeenCalled();
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it.each(["container", "known-media"])("preserves a committed publication if its DB response is lost: %s", async kind => {
+    stored = kind === "container"
+      ? record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a" })
+      : record({ stage: "FINALIZE", mediaId: "media-a" });
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    const update = mocks.receipt.updateMany.getMockImplementation()!;
+    mocks.receipt.updateMany.mockImplementation(async args => {
+      const result = await update(args);
+      if (args.data.status === "published") throw new Error("Lost DB commit response");
+      return result;
+    });
+    expect((await getMusaPublication(context, publicationId)).status).toBe("published");
+    expect(stored?.stage).toBe("DONE");
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("requires both workspace scope and granted account before reconciliation", async () => {
+    stored = record({ status: "uncertain", stage: "META_PUBLISHING", containerId: "container-a" });
+    await expect(getMusaPublication({ ...context, workspaceId: "other" }, publicationId)).rejects.toMatchObject({ status: 404 });
+    await expect(getMusaPublication({ ...context, accounts: [] }, publicationId)).rejects.toMatchObject({ status: 403 });
+    expect(mocks.pollMeta).not.toHaveBeenCalled();
   });
 });
