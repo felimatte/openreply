@@ -20,12 +20,12 @@ All routes are under `/api/integrations/musa/v1` and return JSON with `version: 
 
 Other routes require `Authorization: Bearer <token>` and the same `X-Musa-Business-Id`:
 
-- `GET /accounts` lists only granted accounts with `canPublish` and `publishUnavailableReason`. Publishing is available only when the provider confirms the required permissions.
+- `GET /accounts` lists only granted accounts with `canPublish`, `publishUnavailableReason` and `supportedFormats`. The format list is `["reel","image","carousel"]` only when the provider confirms publishing authorization; otherwise it is empty. Clients talking to an older server without the list must assume Reel-only when `canPublish` is true.
 - `GET /summary?accountId=...&from=...&to=...` returns aggregate automation activity for one granted account. The ISO timestamp range includes `from` and excludes `to`, defaults to the preceding 30 days and is limited to 366 days. Confirmed, failed, skipped and uncertain DM deliveries are counted separately. Contacts are distinct people in the matching automation logs. Clicks include both campaign and flow links. CTR is clicks divided by confirmed sends, capped at 100%. These metrics do not measure Instagram profile reach. A query failure returns an error, rather than fabricated zero activity.
 - `GET /campaigns?accountId=...` lists campaigns from that account. A paused campaign without a published post, any-post trigger, DM trigger or existing MUSA publication reservation can be attached. A paused “next reel” draft is supported; the publication process binds the actual confirmed media ID.
 - `DELETE /connection` revokes the authenticated connection and returns `{version:1,revoked:true}`.
 
-Video publication is handled by `PUT /publications/:publicationId` and `GET /publications/:publicationId`. MUSA calls PUT when the scheduled time arrives, using its stable publication UUID as the durable idempotency key. It must preserve that UUID and the original payload when polling or retrying. Provider uncertainty must remain visible until reconciled.
+Publication of Reels, images and mixed carousels is handled by `PUT /publications/:publicationId` and `GET /publications/:publicationId`. MUSA calls PUT when the scheduled time arrives, using its stable publication UUID as the durable idempotency key. It must preserve that UUID and the original payload when polling or retrying. Provider uncertainty must remain visible until reconciled.
 
 ## Opening the selected workspace
 

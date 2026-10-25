@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const contextMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: contextMock }));
 import { getMusaPublishingCapability } from "@/lib/integrations/musa/publications-capabilities";
-import { createMetaContainer, createZernioPublication, metaContainerStatus, publicationProviderRequest, readZernioPublication } from "@/lib/integrations/musa/publications-provider";
+import { createMetaContainer, createMetaCarouselChild, createMetaCarouselContainer, createZernioPublication, metaContainerStatus, publicationProviderRequest, readZernioPublication } from "@/lib/integrations/musa/publications-provider";
 
 const fetchMock = vi.fn();
 const meta = { provider: "META" as const, accessToken: "test-token-never-real" };
@@ -16,6 +16,43 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("publication provider boundary", () => {
+  it("creates a feed image instead of a Reel", async () => {
+    fetchMock.mockResolvedValue(Response.json({ id: "image-a" }));
+    await createMetaContainer(meta, "ig-a", { accountId: "account-a", caption: "Foto", format: "image",
+      mediaItems: [{ type: "image", url: "https://cdn.example.com/a.jpg" }] });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ image_url: "https://cdn.example.com/a.jpg", caption: "Foto" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(["image", "video"] as const)("creates an unpublished carousel child of type %s", async type => {
+    fetchMock.mockResolvedValue(Response.json({ id: "child-a" }));
+    await createMetaCarouselChild(meta, "ig-a", { type, url: "https://cdn.example.com/media" });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual(type === "video"
+      ? { media_type: "VIDEO", video_url: "https://cdn.example.com/media", is_carousel_item: true }
+      : { image_url: "https://cdn.example.com/media", is_carousel_item: true });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("creates the parent with the exact child order and no publish call", async () => {
+    fetchMock.mockResolvedValue(Response.json({ id: "parent-a" }));
+    expect(await createMetaCarouselContainer(meta, "ig-a", "Caption", ["photo-a", "video-a"])).toBe("parent-a");
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ media_type: "CAROUSEL", children: ["photo-a", "video-a"], caption: "Caption" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("rejects a child ID masquerading as the parent", async () => {
+    fetchMock.mockResolvedValue(Response.json({ id: "child-a" }));
+    await expect(createMetaCarouselContainer(meta, "ig-a", "Caption", ["child-a", "child-b"]))
+      .rejects.toMatchObject({ code: "PROVIDER_INVALID_RESPONSE", ambiguous: true });
+  });
+  it("preserves Zernio mixed media order, key and asynchronous scheduling", async () => {
+    fetchMock.mockResolvedValue(Response.json({ post: { _id: "post-a" } }));
+    const mediaItems = [{ type: "image" as const, url: "https://cdn.example.com/a.jpg" }, { type: "video" as const, url: input.videoUrl }];
+    await createZernioPublication(zernio, { accountId: "account-a", caption: "Mixto", format: "carousel", mediaItems },
+      "publication-uuid", new Date("2026-10-25T19:00:30Z"));
+    const [, options] = fetchMock.mock.calls[0]; const body = JSON.parse(options.body);
+    expect(body.mediaItems).toEqual(mediaItems); expect(body.publishNow).toBeUndefined();
+    expect(body.scheduledFor).toBe("2026-10-25T19:00:30.000Z");
+    expect(options.headers["Idempotency-Key"]).toBe("publication-uuid");
+    expect(body.platforms).toEqual([{ platform: "instagram", accountId: "remote-a" }]);
+  });
   it("sends Meta credentials only in the header and creates a Reel container", async () => {
     fetchMock.mockResolvedValue(Response.json({ id: "container-a" }));
     expect(await createMetaContainer(meta, "ig-a", input)).toBe("container-a");
@@ -63,7 +100,7 @@ describe("real publishing capability", () => {
   it("probes the account's documented scope-protected quota endpoint using one GET", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     fetchMock.mockResolvedValue(Response.json({ data: [{ quota_usage: 2, config: { quota_total: 50, quota_duration: 86400 } }] }));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: true, publishUnavailableReason: null });
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: true, publishUnavailableReason: null, supportedFormats: ["reel", "image", "carousel"] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, options] = fetchMock.mock.calls[0];
     expect(url).toBe("https://graph.instagram.com/v25.0/ig-a/content_publishing_limit?fields=quota_usage,config");
@@ -82,14 +119,14 @@ describe("real publishing capability", () => {
   });
   it.each([[50, 50], [51, 50], [0, 0]])("keeps authorization separate from exhausted quota (%i of %i)", async (usage, total) => {
     fetchMock.mockResolvedValue(Response.json({ data: [{ quota_usage: usage, config: { quota_total: total } }] }));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: true, publishUnavailableReason: null });
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: true, publishUnavailableReason: null, supportedFormats: ["reel", "image", "carousel"] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1].method).toBe("GET");
   });
   it.each([400, 401, 403, 429, 500, 503])("keeps HTTP %i closed without retrying or leaking provider content", async (status) => {
     fetchMock.mockResolvedValue(Response.json({ error: { message: `private ${meta.accessToken}`, code: 190 } }, { status }));
     const result = await getMusaPublishingCapability(account);
-    expect(result).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(result).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE", supportedFormats: [] });
     expect(JSON.stringify(result)).not.toContain(meta.accessToken);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][1].method).toBe("GET");
@@ -107,29 +144,29 @@ describe("real publishing capability", () => {
     { data: [{ quota_usage: 2, config: { quota_total: 1.5 } }] },
   ])("rejects an invalid or missing quota response: %j", async (body) => {
     fetchMock.mockResolvedValue(Response.json(body));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE", supportedFormats: [] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("rejects an unreadable provider response", async () => {
     fetchMock.mockResolvedValue(new Response("not JSON", { status: 200 }));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE", supportedFormats: [] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it.each([
     { ...account, accessToken: "" },
     { ...account, tokenExpiresAt: new Date(0) },
   ])("requires live stored credentials before any provider read", async (unavailableAccount) => {
-    expect(await getMusaPublishingCapability(unavailableAccount)).toEqual({ canPublish: false, publishUnavailableReason: "RECONNECT_REQUIRED" });
+    expect(await getMusaPublishingCapability(unavailableAccount)).toEqual({ canPublish: false, publishUnavailableReason: "RECONNECT_REQUIRED", supportedFormats: [] });
     expect(contextMock).not.toHaveBeenCalled(); expect(fetchMock).not.toHaveBeenCalled();
   });
   it("does not call a provider if the stored credential cannot be decrypted", async () => {
     contextMock.mockRejectedValue(new Error(`private ${meta.accessToken}`));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE", supportedFormats: [] });
     expect(fetchMock).not.toHaveBeenCalled();
   });
   it("does not advertise unavailable permissions as working", async () => {
     fetchMock.mockRejectedValue(new Error("upstream unavailable"));
-    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(await getMusaPublishingCapability(account)).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE", supportedFormats: [] });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("stays closed when its two-second signal aborts without retrying", async () => {
@@ -146,14 +183,14 @@ describe("real publishing capability", () => {
     const capability = getMusaPublishingCapability(account);
     await fetching;
     controller.abort(new DOMException("private timeout", "TimeoutError"));
-    expect(await capability).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE" });
+    expect(await capability).toEqual({ canPublish: false, publishUnavailableReason: "PERMISSIONS_UNAVAILABLE", supportedFormats: [] });
     expect(timeout).toHaveBeenCalledExactlyOnceWith(2000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("uses Zernio's token validity and canPost capability", async () => {
     contextMock.mockResolvedValue(zernio);
     fetchMock.mockResolvedValue(Response.json({ tokenStatus: { valid: true }, permissions: { canPost: false } }));
-    expect(await getMusaPublishingCapability({ ...account, provider: "ZERNIO", zernioAccountId: "remote-a" })).toEqual({ canPublish: false, publishUnavailableReason: "PUBLISH_PERMISSION_REQUIRED" });
+    expect(await getMusaPublishingCapability({ ...account, provider: "ZERNIO", zernioAccountId: "remote-a" })).toEqual({ canPublish: false, publishUnavailableReason: "PUBLISH_PERMISSION_REQUIRED", supportedFormats: [] });
   });
 });
 
