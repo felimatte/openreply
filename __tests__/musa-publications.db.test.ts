@@ -4,12 +4,13 @@ import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vites
 import type { InstagramAccount } from "@/app/generated/prisma/client";
 import type { MusaConnectionContext } from "@/lib/integrations/musa/auth";
 
-const remote = vi.hoisted(() => ({ create: vi.fn(), publish: vi.fn(), pollMeta: vi.fn(), capability: vi.fn(), context: vi.fn(), permalink: vi.fn() }));
+const remote = vi.hoisted(() => ({ create: vi.fn(), child: vi.fn(), parent: vi.fn(), publish: vi.fn(), pollMeta: vi.fn(), capability: vi.fn(), context: vi.fn(), permalink: vi.fn() }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: remote.context }));
 vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPublishingCapability: remote.capability }));
 vi.mock("@/lib/integrations/musa/publications-provider", async (original) => ({
   ...await original<typeof import("@/lib/integrations/musa/publications-provider")>(),
   createMetaContainer: remote.create, publishMetaContainer: remote.publish, metaContainerStatus: remote.pollMeta, metaMediaPermalink: remote.permalink,
+  createMetaCarouselChild: remote.child, createMetaCarouselContainer: remote.parent,
 }));
 import { prisma } from "@/lib/db/client";
 import { advanceMusaPublication, getMusaPublication } from "@/lib/integrations/musa/publications";
@@ -43,7 +44,7 @@ describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", 
   beforeEach(() => {
     vi.resetAllMocks();
     vi.stubGlobal("fetch", vi.fn(() => { throw new Error("External network is forbidden in publication tests"); }));
-    remote.capability.mockResolvedValue({ canPublish: true, publishUnavailableReason: null });
+    remote.capability.mockResolvedValue({ canPublish: true, publishUnavailableReason: null, supportedFormats: ["reel", "image", "carousel"] });
     remote.context.mockResolvedValue({ provider: "META", accessToken: "not-real" });
     remote.create.mockResolvedValue("qa-container"); remote.publish.mockResolvedValue("qa-media");
     remote.pollMeta.mockResolvedValue("PUBLISHED");
@@ -172,5 +173,34 @@ describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", 
     const id = randomUUID(); await advanceMusaPublication(context, id, body());
     await expect(advanceMusaPublication({ ...context, connectionId: "different-grant" }, id, body())).rejects.toMatchObject({ status: 409 });
     expect(await prisma.musaPublication.count({ where: { publicationId: id } })).toBe(1);
+  });
+  it("database rejects a child as the parent proof, null children and oversized lists", async () => {
+    const id = randomUUID(); await advanceMusaPublication(context, id, body());
+    const where = { publicationId: id };
+    await prisma.musaPublication.update({ where, data: { childContainerIds: ["qa-child-a", "qa-child-b"] } });
+    await expect(prisma.musaPublication.update({ where, data: { containerId: "qa-child-a" } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where, data: {
+      childContainerIds: Array.from({ length: 11 }, (_, n) => `qa-child-${n}`),
+    } })).rejects.toThrow();
+    await expect(prisma.$executeRaw`UPDATE "MusaPublication" SET "childContainerIds" = ARRAY[NULL]::TEXT[] WHERE "publicationId" = ${id}::uuid`).rejects.toThrow();
+    const saved = await prisma.musaPublication.findUniqueOrThrow({ where });
+    expect(saved.childContainerIds).toEqual(["qa-child-a", "qa-child-b"]); expect(saved.containerId).toBeNull();
+  });
+  it("claims one persistent lease for overlapping mixed-carousel child writes", async () => {
+    const id = randomUUID();
+    const payload = { accountId: account.id, caption: "Synthetic mixed carousel", format: "carousel" as const, mediaItems: [
+      { type: "image" as const, url: "https://cdn.example.com/qa.jpg" },
+      { type: "video" as const, url: "https://cdn.example.com/qa.mp4" },
+    ] };
+    await advanceMusaPublication(context, id, payload);
+    let release!: (value: string) => void; let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    remote.child.mockImplementation(() => { entered(); return new Promise<string>(resolve => { release = resolve; }); });
+    const first = advanceMusaPublication(context, id, payload); await started;
+    await advanceMusaPublication(context, id, payload); expect(remote.child).toHaveBeenCalledTimes(1);
+    release("qa-child-a"); await first;
+    expect(await prisma.musaPublication.findUniqueOrThrow({ where: { publicationId: id } })).toMatchObject({
+      childContainerIds: ["qa-child-a"], containerId: null, stage: "META_CHILD_PROCESSING", leaseToken: null,
+    });
   });
 });

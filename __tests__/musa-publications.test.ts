@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   receipt: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   campaign: { findFirst: vi.fn(), updateMany: vi.fn() }, transaction: vi.fn(), context: vi.fn(), capability: vi.fn(),
   createMeta: vi.fn(), pollMeta: vi.fn(), quota: vi.fn(), publishMeta: vi.fn(), permalink: vi.fn(),
+  createChild: vi.fn(), createParent: vi.fn(),
   createZernio: vi.fn(), pollZernio: vi.fn(), readZernio: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: { musaPublication: mocks.receipt, automation: mocks.campaign, $transaction: mocks.transaction } }));
@@ -14,6 +15,7 @@ vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPub
 vi.mock("@/lib/integrations/musa/publications-provider", async (original) => ({
   ...await original<typeof import("@/lib/integrations/musa/publications-provider")>(),
   createMetaContainer: mocks.createMeta, metaContainerStatus: mocks.pollMeta, metaPublishingQuota: mocks.quota,
+  createMetaCarouselChild: mocks.createChild, createMetaCarouselContainer: mocks.createParent,
   publishMetaContainer: mocks.publishMeta, metaMediaPermalink: mocks.permalink,
   createZernioPublication: mocks.createZernio, getZernioPublication: mocks.pollZernio, readZernioPublication: mocks.readZernio,
 }));
@@ -32,7 +34,7 @@ let stored: MusaPublication | null;
 function record(extra: Partial<MusaPublication> = {}): MusaPublication {
   return { id: "receipt-a", connectionId: context.connectionId, workspaceId: context.workspaceId, publicationId,
     accountId: input.accountId, provider: "META", payloadHash: publicationPayloadHash(input), payload: input,
-    status: "processing", stage: "READY", campaignId: null, campaignUpdatedAt: null, containerId: null, confirmationContainerId: null,
+    status: "processing", stage: "READY", campaignId: null, campaignUpdatedAt: null, containerId: null, confirmationContainerId: null, childContainerIds: [],
     providerPostId: null, providerScheduledAt: null, mediaId: null, permalink: null, errorCode: null,
     leaseToken: null, leaseUntil: null, nextAttemptAt: null, attemptStartedAt: null,
     publishedAt: null, createdAt: baseTime, updatedAt: baseTime, ...extra };
@@ -63,8 +65,10 @@ beforeEach(() => {
   });
   mocks.transaction.mockImplementation(async (run) => run({ musaPublication: mocks.receipt, automation: mocks.campaign, $queryRaw: vi.fn() }));
   mocks.context.mockResolvedValue({ provider: "META", accessToken: "never-sent" });
-  mocks.capability.mockResolvedValue({ canPublish: true, publishUnavailableReason: null });
+  mocks.capability.mockResolvedValue({ canPublish: true, publishUnavailableReason: null, supportedFormats: ["reel", "image", "carousel"] });
   mocks.createMeta.mockResolvedValue("container-a"); mocks.pollMeta.mockResolvedValue("FINISHED");
+  mocks.createChild.mockImplementation(async () => `child-${(stored?.childContainerIds.length ?? 0) + 1}`);
+  mocks.createParent.mockResolvedValue("parent-a");
   mocks.quota.mockResolvedValue(true); mocks.publishMeta.mockResolvedValue("media-a");
   mocks.permalink.mockResolvedValue("https://www.instagram.com/reel/confirmed/");
   mocks.campaign.updateMany.mockResolvedValue({ count: 1 });

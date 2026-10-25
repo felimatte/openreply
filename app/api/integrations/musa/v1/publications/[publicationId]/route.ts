@@ -24,10 +24,10 @@ export async function PUT(request: Request, context: Context) {
   try {
     const connection = await requireMusaConnection(request);
     const id = await publicationId(context);
-    if (Number(request.headers.get("content-length") ?? 0) > 20_000)
+    if (Number(request.headers.get("content-length") ?? 0) > 40_000)
       throw new MusaIntegrationError(413, "PAYLOAD_TOO_LARGE", "Publication payload is too large");
     const text = await request.text();
-    if (text.length > 20_000) throw new MusaIntegrationError(413, "PAYLOAD_TOO_LARGE", "Publication payload is too large");
+    if (Buffer.byteLength(text, "utf8") > 40_000) throw new MusaIntegrationError(413, "PAYLOAD_TOO_LARGE", "Publication payload is too large");
     let raw: unknown;
     try { raw = JSON.parse(text); } catch { throw new MusaIntegrationError(400, "INVALID_PAYLOAD", "Invalid JSON"); }
     const parsed = musaPublicationInputSchema.safeParse(raw);

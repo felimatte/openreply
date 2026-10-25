@@ -1,10 +1,11 @@
 import { z } from "zod";
 import { createInstagramContext, type ProviderAccount } from "@/lib/instagram/context";
 import { publicationProviderRequest } from "./publications-provider";
+import { MUSA_PUBLICATION_FORMATS, type MusaPublicationFormat } from "./publications-policy";
 
 export async function getMusaPublishingCapability(account: ProviderAccount & { tokenExpiresAt?: Date | null }):
-Promise<{ canPublish: boolean; publishUnavailableReason: string | null }> {
-  const unavailable = (publishUnavailableReason: string) => ({ canPublish: false, publishUnavailableReason });
+Promise<{ canPublish: boolean; publishUnavailableReason: string | null; supportedFormats: MusaPublicationFormat[] }> {
+  const unavailable = (publishUnavailableReason: string) => ({ canPublish: false, publishUnavailableReason, supportedFormats: [] });
   if (account.provider === "META" && (!account.accessToken ||
     (account.tokenExpiresAt && account.tokenExpiresAt <= new Date()))) return unavailable("RECONNECT_REQUIRED");
   if (account.provider === "ZERNIO" && !account.zernioAccountId) return unavailable("RECONNECT_REQUIRED");
@@ -27,6 +28,6 @@ Promise<{ canPublish: boolean; publishUnavailableReason: string | null }> {
       if (!result.data.tokenStatus.valid) return unavailable("RECONNECT_REQUIRED");
       if (!result.data.permissions.canPost) return unavailable("PUBLISH_PERMISSION_REQUIRED");
     }
-    return { canPublish: true, publishUnavailableReason: null };
+    return { canPublish: true, publishUnavailableReason: null, supportedFormats: [...MUSA_PUBLICATION_FORMATS] };
   } catch { return unavailable("PERMISSIONS_UNAVAILABLE"); }
 }

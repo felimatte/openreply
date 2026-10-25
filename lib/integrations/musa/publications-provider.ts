@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getMetaGraphApiVersion } from "@/lib/env";
 import type { InstagramContext } from "@/lib/instagram/context";
-import type { MusaPublicationInput } from "./publications-policy";
+import { publicationCover, publicationFormat, publicationMedia, type MusaPublicationInput, type MusaMediaItem } from "./publications-policy";
 
 export class MusaProviderError extends Error {
   constructor(public readonly code: string, public readonly ambiguous = false, public readonly retryable = false) {
@@ -61,12 +61,33 @@ async function providerJson(response: Response, signal: AbortSignal): Promise<un
 
 const remoteId = z.object({ id: z.string().min(1) });
 export async function createMetaContainer(context: InstagramContext, instagramId: string, input: MusaPublicationInput) {
+  const format = publicationFormat(input), media = publicationMedia(input), cover = publicationCover(input);
+  if (format === "carousel") throw new MusaProviderError("PUBLICATION_STATE_INVALID");
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
-    method: "POST", body: { media_type: "REELS", video_url: input.videoUrl, caption: input.caption,
-      ...(input.coverUrl ? { cover_url: input.coverUrl } : {}) },
+    method: "POST", body: { ...(format === "image" ? { image_url: media[0].url }
+      : { media_type: "REELS", video_url: media[0].url, ...(cover ? { cover_url: cover } : {}) }), caption: input.caption },
   });
   const parsed = remoteId.safeParse(raw);
   if (!parsed.success) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", true);
+  return parsed.data.id;
+}
+
+export async function createMetaCarouselChild(context: InstagramContext, instagramId: string, media: MusaMediaItem) {
+  const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
+    method: "POST", body: { is_carousel_item: true, ...(media.type === "video"
+      ? { media_type: "VIDEO", video_url: media.url } : { image_url: media.url }) },
+  });
+  const parsed = z.object({ id: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/) }).safeParse(raw);
+  if (!parsed.success) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", true);
+  return parsed.data.id;
+}
+
+export async function createMetaCarouselContainer(context: InstagramContext, instagramId: string, caption: string, children: string[]) {
+  const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
+    method: "POST", body: { media_type: "CAROUSEL", children, caption },
+  });
+  const parsed = remoteId.safeParse(raw);
+  if (!parsed.success || children.includes(parsed.data.id)) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", true);
   return parsed.data.id;
 }
 
@@ -118,13 +139,14 @@ export function readZernioPublication(raw: unknown, accountId: string) {
 
 export async function createZernioPublication(context: Extract<InstagramContext, { provider: "ZERNIO" }>,
   input: MusaPublicationInput, publicationId: string, scheduledAt: Date) {
+  const cover = publicationCover(input);
   return publicationProviderRequest(context, "/posts", { method: "POST", idempotencyKey: publicationId,
-    body: { content: input.caption, mediaItems: [{ type: "video", url: input.videoUrl }],
+    body: { content: input.caption, mediaItems: publicationMedia(input),
       // A near-future schedule delegates video processing to Zernio's worker.
       // publishNow is synchronous and can exceed a serverless request lifetime.
       scheduledFor: scheduledAt.toISOString(), timezone: "UTC",
       platforms: [{ platform: "instagram", accountId: context.accountId,
-        ...(input.coverUrl ? { platformSpecificData: { instagramThumbnail: input.coverUrl } } : {}) }],
+        ...(cover ? { platformSpecificData: { instagramThumbnail: cover } } : {}) }],
       metadata: { musaPublicationId: publicationId } },
   });
 }

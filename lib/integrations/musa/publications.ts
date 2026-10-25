@@ -5,7 +5,8 @@ import { createInstagramContext } from "@/lib/instagram/context";
 import { requireMusaAccount, type MusaConnectionContext } from "./auth";
 import { MusaIntegrationError } from "./errors";
 import { getMusaPublishingCapability } from "./publications-capabilities";
-import { isMusaCampaignAttachable, musaPublicationInputSchema, publicationPayloadHash, type MusaPublicationInput } from "./publications-policy";
+import { isMusaCampaignAttachable, musaPublicationInputSchema, publicationFormat, publicationPayloadHash, type MusaPublicationInput } from "./publications-policy";
+import { advanceMetaCarousel } from "./publications-carousel";
 import { createMetaContainer, createZernioPublication, getZernioPublication, metaContainerStatus,
   metaMediaPermalink, metaPublishingQuota, MusaProviderError, publishMetaContainer, readZernioPublication } from "./publications-provider";
 
@@ -22,6 +23,7 @@ export function musaPublicationResult(row: MusaPublication) {
     ...(row.status === "published" && row.provider === "META" && !row.mediaId && !row.permalink
       && row.confirmationContainerId && /^[a-zA-Z0-9_-]{1,128}$/.test(row.confirmationContainerId)
       && row.confirmationContainerId === row.containerId
+      && !row.childContainerIds.includes(row.confirmationContainerId)
       ? { confirmation: { source: "meta_container" as const, containerId: row.confirmationContainerId, status: "PUBLISHED" as const } } : {}),
     retryAfterSeconds: row.status === "processing"
       ? Math.max(1, Math.ceil((Math.max(row.nextAttemptAt?.getTime() ?? 0, row.leaseUntil?.getTime() ?? 0) - Date.now()) / 1000)) : null };
@@ -40,12 +42,14 @@ export async function getMusaPublication(context: MusaConnectionContext, publica
   const unfinished = row.status === "processing" || row.status === "uncertain";
   const finalize = row.stage === "FINALIZE" && Boolean(row.mediaId);
   const container = row.provider === "META" && Boolean(row.containerId && /^[a-zA-Z0-9_-]{1,128}$/.test(row.containerId))
+    && !row.childContainerIds.includes(row.containerId!)
     && (row.stage === "META_PUBLISHING" || row.stage === "META_PROCESSING" && row.status === "uncertain");
   if (unfinished && (finalize || container)) await reconcileMusaPublication(context, row);
   return musaPublicationResult(await loadMusaPublication(context, publicationId));
 }
 
 async function confirmMetaContainer(row: MusaPublication, leaseToken: string) {
+  if (!row.containerId || row.childContainerIds.includes(row.containerId)) throw new MusaProviderError("PUBLICATION_STATE_INVALID", true);
   await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken, status: row.status,
     stage: row.stage, provider: "META", containerId: row.containerId, mediaId: null }, data: {
     status: "published", stage: "DONE", confirmationContainerId: row.containerId,
@@ -176,17 +180,23 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
   });
   try {
     const payload = musaPublicationInputSchema.parse(current.payload);
-    if (current.stage === "META_CREATING" || current.stage === "META_PUBLISHING") {
+    if (["META_CREATING", "META_CHILD_CREATING", "META_PUBLISHING"].includes(current.stage)) {
       // A worker died after the write-ahead marker. Never repeat that POST.
       await save({ status: "uncertain", errorCode: "PUBLICATION_CONFIRMATION_REQUIRED" });
     } else if (current.stage === "PREPARE") {
       await assertCampaignUnchanged(current);
       const capability = await getMusaPublishingCapability(account);
       if (!capability.canPublish) throw new MusaProviderError(capability.publishUnavailableReason ?? "PUBLISH_PERMISSION_REQUIRED");
+      if (!(capability.supportedFormats ?? ["reel"]).includes(publicationFormat(payload)))
+        throw new MusaProviderError("FORMAT_UNAVAILABLE");
       await save({ stage: "READY", nextAttemptAt: null });
     } else {
       const provider = await createInstagramContext(account);
-      if (current.stage === "READY" && provider.provider === "META") {
+      if (provider.provider === "META" && publicationFormat(payload) === "carousel" &&
+        ["READY", "META_CHILD_PROCESSING", "META_PARENT_READY"].includes(current.stage)) {
+        await assertCampaignUnchanged(current);
+        await advanceMetaCarousel({ row: current, provider, instagramId: account.instagramId, payload, save });
+      } else if (current.stage === "READY" && provider.provider === "META") {
         await assertCampaignUnchanged(current);
         await save({ stage: "META_CREATING", attemptStartedAt: new Date() });
         const containerId = await createMetaContainer(provider, account.instagramId, payload);
@@ -239,7 +249,8 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
     if (error.ambiguous && !zernioRetry) await save({ status: "uncertain", errorCode: error.code });
     else if (error.retryable || zernioRetry) {
       // A definite rate limit did not create/publish anything; restore its step.
-      if (current.stage === "META_CREATING") await save({ stage: "READY" });
+      if (current.stage === "META_CREATING") await save({ stage: publicationFormat(input) === "carousel" ? "META_PARENT_READY" : "READY" });
+      if (current.stage === "META_CHILD_CREATING") await save({ stage: "READY" });
       if (current.stage === "META_PUBLISHING") await save({ stage: "META_READY" });
       await wait(60, error.code);
     } else if (["ZERNIO_CREATING", "ZERNIO_PROCESSING"].includes(current.stage) && error.code !== "PROVIDER_PUBLICATION_FAILED") {
