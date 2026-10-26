@@ -6,10 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+# Actualizaciones de un mismo PR/rama sustituyen su validación anterior.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: TypeScript and integration checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     services:
       postgres:
