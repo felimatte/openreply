@@ -1,4 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { createRequire } from "node:module";
+
+// Next/Vercel can supply a Request from a different Web API implementation.
+const { Request: RuntimeRequest } = createRequire(import.meta.url)("next/dist/compiled/@edge-runtime/primitives/fetch.js") as { Request: typeof Request };
 
 const db = vi.hoisted(() => ({
   musaConnection: { findUnique: vi.fn() }, workspaceMember: { findUnique: vi.fn() }, instagramAccount: { findMany: vi.fn() },
@@ -67,6 +71,23 @@ describe("analytics values and transport boundaries", () => {
 });
 
 describe("authenticated account insights", () => {
+  it("accepts a runtime Request without depending on its constructor identity", async () => {
+    const original = request();
+    const runtimeRequest = new RuntimeRequest(original.url, { headers: original.headers });
+    expect(runtimeRequest).not.toBeInstanceOf(Request);
+    const response = await accountRoute(runtimeRequest);
+    expect(response.status).toBe(200);
+    expect((await response.json()).accountId).toBe("account-a");
+    expect(provider).toHaveBeenCalled();
+  });
+  it.each([false, true])("keeps validation and auth errors for a runtime Request: valid query %s", async validQuery => {
+    const runtimeRequest = new RuntimeRequest(validQuery ? request().url : "https://openreply.example/api/integrations/musa/v1/analytics/account");
+    const response = await accountRoute(runtimeRequest);
+    expect(response.status).toBe(validQuery ? 401 : 400);
+    expect((await response.json()).error.code).toBe(validQuery ? "UNAUTHORIZED" : "INVALID_QUERY");
+    expect(provider).not.toHaveBeenCalled();
+    expect(db.musaConnection.findUnique).not.toHaveBeenCalled();
+  });
   it.each([false, true])("blocks provider reads when the grant or global quota is unavailable: %s", async limited => {
     vi.mocked(reserveAnalyticsRead).mockRejectedValue(new AnalyticsQuotaError(limited));
     const response = await accountRoute(request());

@@ -84,3 +84,6 @@ jobs:
           INSTAGRAM_APP_SECRET: test
           FACEBOOK_APP_SECRET: test
           WEBHOOK_VERIFY_TOKEN: test
+
+      - name: Check compiled analytics routes over HTTP
+        run: node scripts/qa-musa-analytics-http.mjs
