@@ -27,6 +27,34 @@ analytics para MUSA. Business Discovery y sus permisos efectivos no se han
 acreditado; Instagram Login actual no demuestra acceso a otras cuentas.
 Se conserva Graph APIv25.0, sin actualización por rutina.
 
+### Avance de implementación (sin publicar)
+
+Se agregan rutas de lectura `analytics/account`, `media`, `capabilities` y
+`discovery` al puente v1. Verifican concesión y cuenta por petición, perfil del
+token antes de entregar datos, límite total8,2s, respuestas acotadas y cursor
+cifrado por conexión/generación/cuenta/rango. Account usa exclusivamente
+`total_value`; medios piden `period=lifetime` y rechazan series ambiguas.
+Zernio conserva `lastUpdated`, distingue falta de sincronización de falta de
+permiso y declara muestra parcial; no convierte portada/permalink en video.
+Discovery devuelve acceso pendiente porque aún no existe una concesión de
+Facebook Login/Business Discovery acreditada. No se añade OAuth ni permisos.
+
+El SDK oficial [Meta25.0.3](https://github.com/facebook/facebook-python-business-sdk/tree/25.0.3/facebook_business/adobjects)
+acredita parámetros y formas de respuesta, **no** permisos efectivos, semántica
+exacta de agregación ni zona efectiva en las cuentas conectadas.
+
+La matriz real sigue pendiente: la configuración local apunta a PostgreSQL
+local no disponible (`ECONNREFUSED`, comprobación de sólo lectura). El CLI sí
+encuentra el proyecto Vercel existente; sus variables necesarias son secretos
+exclusivos de producción y no se recuperaron. Ninguna consulta a Meta real se
+ejecutó. No confundir las métricas de automatización ya disponibles para MUSA
+con estas lecturas nuevas. No está lista la entrega funcional hasta acreditar
+esta matriz y completar persistencia/cola/privacidad/consumidor en MUSA.
+
+Pruebas locales: tipos y lint del puente correctos; 42 pruebas de analytics e
+identidad pasan con respuestas simuladas. La CI del PR7 acredita por separado
+el conjunto; estos ensayos no acreditan acceso a cuentas reales.
+
 ## Decisiones de datos
 
 - `null` conserva una ausencia; no convertir métricas omitidas en cero.
