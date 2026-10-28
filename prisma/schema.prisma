@@ -25,6 +25,7 @@ model User {
   sentInvitations   WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
   musaConnections   MusaConnection[]
   musaPairingCodes  MusaPairingCode[]
+  discoveryGrants  MusaDiscoveryGrant[]
 }
 
 model Account {
@@ -116,6 +117,8 @@ model MusaConnection {
   revokedAt         DateTime?
   workspace         Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   grantedBy         User @relation(fields: [grantedByUserId], references: [id], onDelete: Cascade)
+  discoveryFlows    MusaDiscoveryFlow[]
+  discoveryGrants   MusaDiscoveryGrant[]
 
   @@index([workspaceId, revokedAt])
   @@index([grantedByUserId])
@@ -194,8 +197,56 @@ model InstagramAccount {
   linkClicks  LinkClick[]
   followerSnapshots FollowerSnapshot[]
   flowRuns          FlowRun[]
+  discoveryFlows    MusaDiscoveryFlow[]
+  discoveryGrants   MusaDiscoveryGrant[]
 
   @@index([workspaceId])
+}
+
+/// One short-lived, single-use browser round trip per MUSA grant/account.
+model MusaDiscoveryFlow {
+  id               String @id @default(cuid())
+  connectionId     String
+  accountId        String
+  ticketHash       String @unique
+  stateHash        String? @unique
+  browserHash      String?
+  actorUserId      String?
+  accountTokenHash String
+  instagramId      String
+  returnPath       String
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  createdAt        DateTime @default(now())
+  connection       MusaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  account          InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, accountId])
+}
+
+/// Independent Facebook user token. It never replaces InstagramAccount.accessToken.
+model MusaDiscoveryGrant {
+  id                  String @id @default(cuid())
+  connectionId        String
+  accountId           String
+  grantedByUserId     String
+  accountTokenHash     String
+  instagramId         String
+  instagramUserId     String
+  facebookUserId      String
+  facebookInstagramId String
+  pageId              String
+  encryptedToken      String?
+  expiresAt           DateTime
+  scopes              String[]
+  revokedAt           DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  connection          MusaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  account             InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  grantedBy           User @relation(fields: [grantedByUserId], references: [id], onDelete: Cascade)
+
+  @@unique([connectionId, accountId])
 }
 
 /// Daily follower total for one account. Instagram only retains ~30 days of
