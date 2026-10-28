@@ -5,7 +5,8 @@ const db = vi.hoisted(() => ({
   workspace: { findUnique: vi.fn() }, followerSnapshot: { findMany: vi.fn() },
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: db }));
-vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: vi.fn().mockResolvedValue({ provider: "META", accessToken: "private-provider-token" }) }));
+vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: vi.fn(async () => ({ provider: "META", accessToken: "private-provider-token" })) }));
+vi.mock("@/lib/integrations/musa/analytics-quota", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/integrations/musa/analytics-quota")>(), reserveAnalyticsRead: vi.fn() }));
 
 import { metric, analyticsMetric, analyticsAsset, analyticsQuery } from "@/lib/integrations/musa/analytics-contract";
 import type { AnalyticsIdentity } from "@/lib/integrations/musa/analytics-contract";
@@ -14,6 +15,7 @@ import { publicMediaUrl } from "@/lib/integrations/musa/analytics-transport";
 import { GET as accountRoute } from "@/app/api/integrations/musa/v1/analytics/account/route";
 import { GET as mediaRoute } from "@/app/api/integrations/musa/v1/analytics/media/route";
 import { createInstagramContext } from "@/lib/instagram/context";
+import { AnalyticsQuotaError, reserveAnalyticsRead } from "@/lib/integrations/musa/analytics-quota";
 
 const range = { from: "2026-10-21T03:00:00.000Z", to: "2026-10-28T03:00:00.000Z", timezone: "America/Argentina/Buenos_Aires" };
 const identity: AnalyticsIdentity = { version: 1, connectionId: "grant-a", generation: "a".repeat(64), accountId: "account-a", instagramId: "ig-a", provider: "META", apiVersion: "v25.0", observedAt: "2026-10-28T12:00:00.000Z", range };
@@ -31,6 +33,7 @@ beforeEach(() => {
   db.musaConnection.findUnique.mockResolvedValue(grant); db.workspaceMember.findUnique.mockResolvedValue({ role: "ADMIN" });
   db.instagramAccount.findMany.mockResolvedValue([account]); db.workspace.findUnique.mockResolvedValue({ id: "workspace-a", name: "Test" });
   db.followerSnapshot.findMany.mockResolvedValue([{ date: new Date("2026-10-25"), followersCount: 123 }]);
+  vi.mocked(reserveAnalyticsRead).mockResolvedValue(undefined);
   provider.mockImplementation(async input => {
     const url = new URL(String(input));
     if (url.pathname.endsWith("/me")) return json({ id: "app-scoped-id", user_id: "ig-a", username: "test", followers_count: 123 });
@@ -64,6 +67,15 @@ describe("analytics values and transport boundaries", () => {
 });
 
 describe("authenticated account insights", () => {
+  it.each([false, true])("blocks provider reads when the grant or global quota is unavailable: %s", async limited => {
+    vi.mocked(reserveAnalyticsRead).mockRejectedValue(new AnalyticsQuotaError(limited));
+    const response = await accountRoute(request());
+    expect(response.status).toBe(limited ? 429 : 503);
+    if (limited) expect(response.headers.get("Retry-After")).toBe("3600");
+    const body = await response.json();
+    expect(provider).not.toHaveBeenCalled();
+    expect(JSON.stringify(body)).not.toContain("redis");
+  });
   it("bounds stalled authentication and prevents late provider reads", async () => {
     vi.useFakeTimers();
     let release: (value: typeof grant) => void = () => undefined;
@@ -77,13 +89,14 @@ describe("authenticated account insights", () => {
       expect(provider).not.toHaveBeenCalled(); expect(db.followerSnapshot.findMany).not.toHaveBeenCalled();
     } finally { vi.useRealTimers(); }
   });
-  it("reads native totals, omits backfilled history and never invents capture time", async () => {
+  it("keeps unvalidated native totals unavailable, omits backfilled history and never invents capture time", async () => {
     const response = await accountRoute(request()); expect(response.status).toBe(200);
-    const body = await response.json(); expect(body.metrics.reach.value).toBe(42); expect(body.metricScope).toBe("account_period");
+    const body = await response.json(); expect(body.metrics.reach).toEqual({ value: null, state: "pending_validation" }); expect(body.metricScope).toBe("account_period");
+    expect(body.followers).toEqual({ value: 123, state: "available" });
     expect(body.observations[0]).toMatchObject({ observedAt: null, precision: "utc_day", source: "observed" });
     expect(db.followerSnapshot.findMany.mock.calls[0][0].where).toMatchObject({ instagramAccountId: "account-a", backfilled: false });
     const queries = provider.mock.calls.map(([url]) => new URL(String(url))).filter(url => url.pathname.endsWith("/insights"));
-    expect(queries).toHaveLength(3); for (const query of queries) { expect(query.searchParams.get("metric_type")).toBe("total_value"); expect(query.searchParams.get("since")).toBe(String(Date.parse(range.from) / 1000)); }
+    expect(queries).toHaveLength(0);
     expect(JSON.stringify(body)).not.toContain("private-provider-token");
   });
   it("does not sum daily values when the native aggregate is missing", async () => {
@@ -136,6 +149,17 @@ describe("bounded media pages", () => {
   it("sanitizes a provider failure without replacing missing stats by zero", async () => {
     provider.mockResolvedValue(json({ error: { code: 190, message: "private-provider-token" } }, 400));
     const body = await (await mediaRoute(request("media"))).json(); expect(body.state).toBe("permission_required"); expect(body.media).toEqual([]); expect(JSON.stringify(body)).not.toContain("private-provider-token");
+  });
+  it.each([4, 17, 368])("propagates Graph throttle %s from insights without a partial success", async code => {
+    provider.mockImplementation(async input => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/me")) return json({ id: "ig-a", username: "test" });
+      if (url.pathname.endsWith("/media")) return json({ data: [reel] });
+      return new Response(JSON.stringify({ error: { code, message: "private" } }), { status: 400, headers: { "Retry-After": "7200" } });
+    });
+    const response = await mediaRoute(request("media"));
+    expect(response.status).toBe(429); expect(response.headers.get("Retry-After")).toBe("7200");
+    expect((await response.json()).media).toBeUndefined();
   });
   it("preserves Zernio source age and matches both post and account identities", async () => {
     db.instagramAccount.findMany.mockResolvedValue([{ ...account, provider: "ZERNIO" }]);

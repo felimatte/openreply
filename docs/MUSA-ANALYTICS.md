@@ -32,28 +32,45 @@ Se conserva Graph APIv25.0, sin actualización por rutina.
 Se agregan rutas de lectura `analytics/account`, `media`, `capabilities` y
 `discovery` al puente v1. Verifican concesión y cuenta por petición, perfil del
 token antes de entregar datos, límite total8,2s, respuestas acotadas y cursor
-cifrado por conexión/generación/cuenta/rango. Account usa exclusivamente
-`total_value`; medios piden `period=lifetime` y rechazan series ambiguas.
+cifrado por conexión/generación/cuenta/rango. Account conserva agregados como
+`pending_validation` hasta acreditar rango y zona; medios piden `period=lifetime`
+y rechazan series ambiguas. El lector aislado de `total_value` no se activa por
+tener una respuesta técnicamente válida.
 Zernio conserva `lastUpdated`, distingue falta de sincronización de falta de
 permiso y declara muestra parcial; no convierte portada/permalink en video.
-Discovery devuelve acceso pendiente porque aún no existe una concesión de
+Discovery devuelve `pending_validation` porque aún no existe una concesión de
 Facebook Login/Business Discovery acreditada. No se añade OAuth ni permisos.
 
 El SDK oficial [Meta25.0.3](https://github.com/facebook/facebook-python-business-sdk/tree/25.0.3/facebook_business/adobjects)
 acredita parámetros y formas de respuesta, **no** permisos efectivos, semántica
 exacta de agregación ni zona efectiva en las cuentas conectadas.
 
-La matriz real sigue pendiente: la configuración local apunta a PostgreSQL
-local no disponible (`ECONNREFUSED`, comprobación de sólo lectura). El CLI sí
-encuentra el proyecto Vercel existente; sus variables necesarias son secretos
-exclusivos de producción y no se recuperaron. Ninguna consulta a Meta real se
-ejecutó. No confundir las métricas de automatización ya disponibles para MUSA
-con estas lecturas nuevas. No está lista la entrega funcional hasta acreditar
-esta matriz y completar persistencia/cola/privacidad/consumidor en MUSA.
+La configuración local apunta a PostgreSQL no disponible. El CLI encuentra el
+proyecto Vercel; sus secretos de producción no se recuperaron. La comprobación
+real se hizo después desde la sesión de Felipe, mediante funciones existentes.
+No confundir las métricas de automatización del puente vigente con las rutas
+analytics nuevas, que todavía requieren un ensayo integrado con MUSA.
 
-Pruebas locales: tipos y lint del puente correctos; 42 pruebas de analytics e
-identidad pasan con respuestas simuladas. La CI del PR7 acredita por separado
-el conjunto; estos ensayos no acreditan acceso a cuentas reales.
+Después de que Felipe iniciara sesión se comprobó la UI publicada: @felimattee,
+21 publicaciones, 70 seguidores y métricas propias por Reel. El resumen suma
+lifetime de posts, no acredita agregados por rango. Abrir Overview puede ejecutar
+su capturador histórico existente; no afirmar ausencia garantizada de escrituras.
+El GET existente de un post devuelve portada sin media_url: no prometer video
+reproducible en todas las filas. Esta evidencia habilita construir el consumidor
+propio, no acredita todavía el contrato nuevo ni Discovery.
+
+El consumidor de MUSA agrega persistencia, cola, exportación y rutas de negocio
+en PR171. Conserva fechas y cobertura; sólo ofrece comparaciones acreditadas.
+Las pruebas simuladas y la CI de ambos repositorios se informan por separado
+de la comprobación real. No hay migraciones, integración ni despliegue autorizado.
+
+Cada GET al proveedor reserva una unidad atómica en Redis: 1200 por concesión
+y 12000 globales por hora UTC, con hasta24 GET por solicitud del puente. Son
+presupuestos internos, no cuotas garantizadas por Meta/Zernio. Redis ausente o
+no disponible cierra la lectura con503; cuota agotada o throttle del proveedor
+responde429 con espera explícita, sin convertirlo en métricas ausentes. Las
+claves son independientes de DMs. CI prueba las reservas concurrentes contra
+un Redis descartable; localmente ese ensayo requiere MUSA_TEST_REDIS_URL.
 
 ## Decisiones de datos
 

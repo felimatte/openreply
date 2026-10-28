@@ -41,13 +41,13 @@ export async function readAnalyticsAccount(session: AnalyticsSession) {
     return analyticsAccountResponse.parse({ ...session.identity, username: session.account.username,
       followers: unavailable, metrics: { views: unavailable, reach: unavailable, interactions: unavailable }, metricScope: "account_period", observations: [] });
   }
-  const [views, reach, interactions, observations] = await Promise.all([
-    readAccountMetric(session, "views"), readAccountMetric(session, "reach"), readAccountMetric(session, "total_interactions"),
-    prisma.followerSnapshot.findMany({ where: { instagramAccountId: session.account.id, backfilled: false,
+  // Native account range semantics/timezone are not yet accredited for this integration.
+  // Keep the reader independently testable, but never advertise unvalidated aggregates.
+  const pending = metric(null, "pending_validation");
+  const observations = await prisma.followerSnapshot.findMany({ where: { instagramAccountId: session.account.id, backfilled: false,
       date: { gte: new Date(session.identity.range.from.slice(0, 10)), lt: new Date(session.identity.range.to.slice(0, 10)) } },
-      orderBy: { date: "asc" }, take: 92, select: { date: true, followersCount: true } }),
-  ]);
-  return analyticsAccountResponse.parse({ ...session.identity, ...own, metrics: { views, reach, interactions }, metricScope: "account_period",
+      orderBy: { date: "asc" }, take: 92, select: { date: true, followersCount: true } });
+  return analyticsAccountResponse.parse({ ...session.identity, ...own, metrics: { views: pending, reach: pending, interactions: pending }, metricScope: "account_period",
     observations: observations.map(row => ({ date: row.date.toISOString().slice(0, 10), value: row.followersCount,
       observedAt: null, precision: "utc_day", source: "observed" })) });
 }

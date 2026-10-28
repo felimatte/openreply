@@ -5,6 +5,7 @@ import { requireMusaAccount, requireMusaConnection } from "./auth";
 import { analyticsQuery } from "./analytics-contract";
 import type { AnalyticsIdentity } from "./analytics-contract";
 import { MusaIntegrationError } from "./errors";
+import { bindAnalyticsBudget } from "./analytics-transport";
 
 export async function analyticsSession(request: Request) {
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(8000)]);
@@ -23,6 +24,7 @@ export async function analyticsSession(request: Request) {
     observedAt: new Date().toISOString(), range: { from, to, timezone } };
   const context = await createInstagramContext(account);
   signal.throwIfAborted();
+  bindAnalyticsBudget(context, grant.connectionId);
   return { identity, account, query: parsed.data, context, signal };
 }
 export type AnalyticsSession = Awaited<ReturnType<typeof analyticsSession>>;

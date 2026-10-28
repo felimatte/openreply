@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const analyticsState = z.enum(["available", "unsupported", "permission_required", "insufficient_history", "partial", "temporarily_unavailable"]);
+export const analyticsState = z.enum(["available", "unsupported", "permission_required", "insufficient_history", "partial", "temporarily_unavailable", "pending_validation"]);
 export type AnalyticsState = z.infer<typeof analyticsState>;
 export const analyticsMetric = z.object({ value: z.number().nonnegative().nullable(), state: analyticsState })
   .refine(m => m.value === null ? m.state !== "available" : m.state === "available" || m.state === "partial", "Inconsistent metric");

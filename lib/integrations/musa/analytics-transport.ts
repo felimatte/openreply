@@ -2,6 +2,18 @@ import { isIP } from "node:net";
 import { getMetaGraphApiVersion } from "@/lib/env";
 import type { InstagramContext } from "@/lib/instagram/context";
 import type { AnalyticsState } from "./analytics-contract";
+import { AnalyticsQuotaError, reserveAnalyticsRead } from "./analytics-quota";
+
+const budgets = new WeakMap<InstagramContext, { connectionId: string; remaining: number }>();
+export function bindAnalyticsBudget(context: InstagramContext, connectionId: string): void {
+  budgets.set(context, { connectionId, remaining: 24 });
+}
+
+function providerWait(response: Response): number {
+  const header = response.headers.get("Retry-After") ?? "";
+  const seconds = /^\d+$/.test(header) ? Number(header) : (Date.parse(header) - Date.now()) / 1000;
+  return Number.isFinite(seconds) ? Math.max(3600, Math.ceil(seconds)) : 3600;
+}
 
 export class AnalyticsReadError extends Error {
   constructor(public readonly state: AnalyticsState) { super("Analytics read unavailable"); }
@@ -38,24 +50,32 @@ export async function readAnalytics(context: InstagramContext, path: string, que
   const origin = context.provider === "META" ? `https://graph.instagram.com/${getMetaGraphApiVersion()}` : "https://zernio.com/api/v1";
   const token = context.provider === "META" ? context.accessToken : context.apiKey;
   try {
+    signal.throwIfAborted();
+    const budget = budgets.get(context);
+    if (!budget || budget.remaining-- <= 0) throw new AnalyticsQuotaError();
+    await reserveAnalyticsRead(budget.connectionId, signal);
+    signal.throwIfAborted();
     const response = await fetch(`${origin}${path}?${query}`, {
       headers: { Authorization: `Bearer ${token}` }, cache: "no-store", redirect: "error", signal,
     });
+    if (response.status === 429) { await response.body?.cancel(); throw new AnalyticsQuotaError(true, providerWait(response)); }
     const body = await boundedJson(response);
     if (!response.ok) {
       const code = typeof body === "object" && body !== null && "error" in body
         ? (body.error as { code?: number } | undefined)?.code : undefined;
+      if (code === 4 || code === 17 || code === 368) throw new AnalyticsQuotaError(true, providerWait(response));
       if (response.status === 401 || response.status === 403 || code === 190 || code === 10 || code === 200) throw new AnalyticsReadError("permission_required");
       if (code === 100 || response.status === 404) throw new AnalyticsReadError("unsupported");
       throw new AnalyticsReadError("temporarily_unavailable");
     }
     return body;
   } catch (error) {
-    if (error instanceof AnalyticsReadError) throw error;
+    if (error instanceof AnalyticsReadError || error instanceof AnalyticsQuotaError) throw error;
     throw new AnalyticsReadError("temporarily_unavailable");
   }
 }
 
 export function readState(error: unknown): AnalyticsState {
+  if (error instanceof AnalyticsQuotaError) throw error;
   return error instanceof AnalyticsReadError ? error.state : "temporarily_unavailable";
 }
