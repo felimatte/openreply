@@ -75,6 +75,40 @@ describe.skipIf(!databaseUrl)("Discovery consent against PostgreSQL", () => {
     await expect(finishDiscovery(claimed, "fake-code", new AbortController().signal)).rejects.toThrow();
     expect(await grant()).toMatchObject({ encryptedToken: null });
   });
+  it("holds the flow lock through grant storage while a newer ticket or global revocation waits", async () => {
+    const original = state.db;
+    for (const revoke of [false, true]) {
+      const claimed = await claim(), entered = deferred<void>(), release = deferred<void>();
+      // This hook runs inside finishDiscovery's transaction, after its final
+      // generation check, immediately before the grant INSERT/UPDATE.
+      state.db = original.$extends({ query: { musaDiscoveryGrant: { async upsert({ args, query }) {
+        entered.resolve(); await release.promise; return query(args);
+      } } } }) as unknown as PrismaClient;
+      const finishing = finishDiscovery(claimed, "fake-code", new AbortController().signal);
+      let invalidating: Promise<unknown> | undefined;
+      try {
+        await Promise.race([entered.promise, finishing.then(() => { throw new Error("Grant hook was not reached"); })]);
+        invalidating = revoke
+          ? original.musaConnection.update({ where: { id: id("connection") }, data: { revokedAt: new Date() } }).then(value => value)
+          : ticket();
+        await expect.poll(async () => {
+          const rows = await original.$queryRaw<Array<{ waiting: bigint }>>`SELECT count(*) AS waiting FROM pg_stat_activity
+            WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock'
+              AND (query LIKE '%MusaDiscoveryFlow%' OR query LIKE '%MusaConnection%')`;
+          return Number(rows[0].waiting);
+        }, { timeout: 3000, interval: 20 }).toBeGreaterThan(0);
+      } finally {
+        release.resolve(); state.db = original;
+        await Promise.all([finishing, invalidating]);
+      }
+      const persisted = await original.musaDiscoveryFlow.findFirstOrThrow({ where: { connectionId: id("connection") } });
+      expect(persisted.stateHash).toBeNull();
+      if (revoke) {
+        expect(await grant()).toMatchObject({ encryptedToken: null, revokedAt: expect.any(Date) });
+        await original.musaConnection.update({ where: { id: id("connection") }, data: { revokedAt: null } });
+      }
+    }
+  }, 15_000);
   it("global disconnect clears tokens and pending states atomically, including an in-flight exchange", async () => {
     await finishDiscovery(await claim(), "fake-code", new AbortController().signal);
     const claimed = await claim(), entered = deferred<void>(), release = deferred<ReturnType<typeof result>>();
