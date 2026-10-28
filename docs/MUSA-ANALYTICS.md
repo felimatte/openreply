@@ -105,6 +105,20 @@ un Redis descartable; localmente ese ensayo requiere MUSA_TEST_REDIS_URL.
 
 ## Decisiones de datos
 
+### Corrección detectada al publicar el 28/10/2026
+
+Responsable escritor e integrador: Codex raíz, mismo checkout exclusivo;
+base `4fc157b012d582d9589be8cef392d03d6ef1e552`, rama
+`codex/fix-analytics-request-runtime-20261028`. El despliegue preparado de PR7
+respondió 500 antes de validar las consultas de analytics; no se promovió.
+La copia implícita de Request depende del constructor y falla con el objeto
+Web Request de otro contexto que puede entregar Next/Vercel. Tres pruebas
+con la implementación de Next reprodujeron el 500 antes de la corrección.
+Se reconstruye la petición GET desde URL, método, cabeceras y señal, conservando
+autenticación y cancelación. Se añade una comprobación HTTP del build en CI.
+No hay cambios de esquema adicionales. La autorización vigente de publicación
+incluye resolver este fallo antes de activar la entrega.
+
 - `null` conserva una ausencia; no convertir métricas omitidas en cero.
 - Insights por publicación son acumulados. No sumarlos para presentar actividad
   de cuenta ni personas únicas del período.

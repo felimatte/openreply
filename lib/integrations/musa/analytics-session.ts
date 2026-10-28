@@ -34,7 +34,9 @@ export async function analyticsWithinDeadline<T>(request: Request, read: (sessio
   const control = new AbortController();
   const timer = setTimeout(() => control.abort(), 8200);
   const signal = AbortSignal.any([request.signal, control.signal]);
-  const scoped = new Request(request, { signal });
+  // Next/Vercel may supply a Request from another Web API implementation.
+  // These readers are GET-only; copy its public fields, not its constructor identity.
+  const scoped = new Request(request.url, { method: request.method, headers: request.headers, signal });
   let rejectOnAbort: () => void = () => undefined;
   const expired = new Promise<never>((_resolve, reject) => {
     rejectOnAbort = () => reject(new MusaIntegrationError(503, "ANALYTICS_UNAVAILABLE", "Analytics are temporarily unavailable."));
