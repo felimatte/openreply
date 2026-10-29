@@ -41,7 +41,7 @@ beforeEach(() => {
   mocks.exchange.mockResolvedValue({ token: "private-facebook-token", facebookUserId: "9012", facebookInstagramId: "3333", instagramUserId: "5678",
     pageId: "4444", scopes: ["instagram_basic"], expiresAt: new Date(Date.now() + 3600_000) });
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 describe("MUSA-scoped Discovery authorization", () => {
   it("issues only an expiring hashed ticket for the exact granted account", async () => {
@@ -129,6 +129,16 @@ describe("browser consent boundaries", () => {
     expect(response.status).toBe(400); expect(mocks.exchange).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toContain(`${DISCOVERY_COOKIE}=`);
     expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  });
+  it("logs only a closed diagnostic and keeps raw provider failures out of HTML", async () => {
+    const logger = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.exchange.mockRejectedValue(new Error("private-token from https://graph.example"));
+    const request = new NextRequest(`https://openreply.example/api/integrations/musa/discovery/callback?state=${state}&code=test`, { headers: { cookie: `${DISCOVERY_COOKIE}=${browser}` } });
+    const response = await callback(request);
+    expect(response.status).toBe(400);
+    expect(await response.text()).not.toContain("private-token");
+    expect(logger).toHaveBeenCalledExactlyOnceWith("musa_discovery_authorization_failed", { stage: "complete_grant", reason: "unexpected" });
+    expect(mocks.grantUpsert).not.toHaveBeenCalled();
   });
   it("consumes denied consent and does not call the provider", async () => {
     const request = new NextRequest(`https://openreply.example/api/integrations/musa/discovery/callback?state=${state}&error=access_denied`, { headers: { cookie: `${DISCOVERY_COOKIE}=${browser}` } });

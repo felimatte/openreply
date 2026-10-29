@@ -56,6 +56,15 @@ describe("separate Facebook consent", () => {
     expect(remote.mock.calls.every(([, options]) => options?.redirect === "error" && options.cache === "no-store")).toBe(true);
     expect(remote.mock.calls.every(([url]) => !String(url).includes("username"))).toBe(true);
   });
+  it("accepts Meta's documented numeric app_id without changing the identity proof", async () => {
+    debug.app_id = 1234;
+    expect(await exchange()).toMatchObject({ facebookInstagramId: "3333", pageId: "4444" });
+  });
+  it.each([1234.5, Number.MAX_SAFE_INTEGER + 1, -1234, null, true, {}, "1234.0"])("rejects unsafe or malformed app_id %j", async value => {
+    debug.app_id = value;
+    await expect(exchange()).rejects.toThrow();
+    expect(remote.mock.calls.some(([url]) => String(url).includes("graph.instagram.com"))).toBe(false);
+  });
   it.each([{ app_id: "9999" }, { type: "SYSTEM_USER" }, { is_valid: false }, { expires_at: 1 }, { data_access_expires_at: 1 }, { scopes: ["instagram_basic"] }])("rejects invalid token metadata %j", async change => {
     Object.assign(debug, change); await expect(exchange()).rejects.toThrow();
     expect(remote.mock.calls.some(([url]) => String(url).includes("graph.instagram.com"))).toBe(false);
@@ -68,14 +77,14 @@ describe("separate Facebook consent", () => {
   });
   it.each([{ data: [] }, { data: [{ id: "4444", instagram_business_account: { id: "9999" } }] },
     { data: [{ id: "4444", instagram_business_account: { id: "3333" } }, { id: "5555", instagram_business_account: { id: "3333" } }] },
-  ])("rejects missing or ambiguous Page identity", async value => { pageData = value; await expect(exchange()).rejects.toThrow("DISCOVERY_ACCOUNT_MISMATCH"); });
+  ])("rejects missing or ambiguous Page identity", async value => { pageData = value; await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "account_mismatch" }); });
   it("does not follow a provider supplied pagination URL", async () => {
     pageData = { data: [], paging: { next: "https://attacker.example/?token=secret", cursors: { after: "same" } } };
-    await expect(exchange()).rejects.toThrow("DISCOVERY_INCOMPLETE_PAGES");
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "incomplete_pages" });
     expect(remote.mock.calls.some(([url]) => String(url).includes("attacker.example"))).toBe(false);
   });
   it("replaces raw provider errors with a closed error", async () => {
     remote.mockResolvedValue(new Response("fake-secret", { status: 500 }));
-    await expect(exchange()).rejects.toThrow("DISCOVERY_PROVIDER_UNAVAILABLE");
+    await expect(exchange()).rejects.toMatchObject({ stage: "exchange_code", reason: "provider_unavailable" });
   });
 });

@@ -40,8 +40,19 @@ export const analyticsAccountResponse = analyticsIdentity.extend({
   observations: z.array(z.object({ date: z.iso.date(), value: z.number().int().nonnegative(), observedAt: instant.nullable(), precision: z.literal("utc_day"), source: z.literal("observed") })).max(92),
 });
 export const analyticsCapabilitiesResponse = analyticsIdentity.extend({
+  discoveryGeneration: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
   capabilities: z.object({ accountInsights: analyticsState, mediaInsights: analyticsState, followerObservations: analyticsState, competitorDiscovery: analyticsState }),
 });
+export const analyticsDiscoveryTarget = z.object({
+  instagramId: externalId, username: z.string().regex(/^[a-zA-Z0-9._]{1,30}$/),
+  followers: analyticsMetric, mediaCount: analyticsMetric,
+});
+export const analyticsDiscoveryResponse = analyticsIdentity.extend({
+  state: analyticsState, target: analyticsDiscoveryTarget.nullable(), media: z.array(analyticsMedia).max(5),
+  nextCursor: z.string().max(4096).nullable(), coverage: z.enum(["complete", "page", "sample", "unavailable"]),
+  discoveryGeneration: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
+});
+export type AnalyticsDiscoveryResponse = z.infer<typeof analyticsDiscoveryResponse>;
 export function metric(value: unknown, fallback: AnalyticsState = "unsupported"): AnalyticsMetric {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? { value, state: "available" } : { value: null, state: fallback };
