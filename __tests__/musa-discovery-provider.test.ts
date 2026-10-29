@@ -88,3 +88,119 @@ describe("separate Facebook consent", () => {
     await expect(exchange()).rejects.toMatchObject({ stage: "exchange_code", reason: "provider_unavailable" });
   });
 });
+
+
+describe("authorized granular Page targets", () => {
+  function targets(show: unknown, read: unknown = show) {
+    debug.granular_scopes = [
+      { scope: "pages_show_list", target_ids: show },
+      { scope: "pages_read_engagement", target_ids: read },
+      // Instagram IDs are not Page candidates, including numbers outside safe precision.
+      { scope: "instagram_basic", target_ids: [Number.MAX_SAFE_INTEGER + 1] },
+    ];
+  }
+  function pages(overrides: Record<string, () => Response>) {
+    const original = remote.getMockImplementation()!;
+    remote.mockImplementation(async (input, options) => {
+      const target = new URL(String(input)).pathname.split("/").at(-1)!;
+      return overrides[target] ? overrides[target]() : original(input, options);
+    });
+  }
+  const pageReads = () => remote.mock.calls.map(([input]) => new URL(String(input)).pathname)
+    .filter(path => /^\/v25\.0\/4\d+$/.test(path));
+  beforeEach(() => { pageData = { data: [] }; });
+
+  it("finds an omitted authorized Page and rechecks its exact linked identity", async () => {
+    targets([4444, "4444"]);
+    expect(await exchange()).toMatchObject({ pageId: "4444", facebookInstagramId: "3333" });
+    expect(pageReads()).toEqual(["/v25.0/4444", "/v25.0/4444"]);
+    expect(remote.mock.calls.every(([url]) => ["graph.facebook.com", "graph.instagram.com"].includes(new URL(String(url)).hostname))).toBe(true);
+  });
+  it("uses only the intersection of both Page permissions", async () => {
+    targets(["4444", "4555"], ["4444", "4666"]);
+    expect(await exchange()).toMatchObject({ pageId: "4444" });
+    expect(pageReads()).toEqual(["/v25.0/4444", "/v25.0/4444"]);
+  });
+  it.each([
+    undefined,
+    [{ scope: "instagram_basic", target_ids: ["4444"] }],
+    [{ scope: "pages_show_list", target_ids: ["4444"] }],
+    [{ scope: "pages_show_list", target_ids: ["4444"] }, { scope: "pages_read_engagement" }],
+    [{ scope: "pages_show_list", target_ids: null }, { scope: "pages_read_engagement", target_ids: ["4444"] }],
+    [{ scope: "pages_show_list", target_ids: [] }, { scope: "pages_read_engagement", target_ids: ["4444"] }],
+    [{ scope: "pages_show_list", target_ids: ["4444"] }, { scope: "pages_show_list", target_ids: ["4444"] }, { scope: "pages_read_engagement", target_ids: ["4444"] }],
+    [{ scope: "pages_show_list", target_ids: ["4444"] }, { scope: "pages_read_engagement", target_ids: ["4555"] }],
+  ].map(granular => ({ granular })))("refuses absent, unbounded, duplicate or disjoint Page grants: %j", async ({ granular }) => {
+    if (granular === undefined) delete debug.granular_scopes; else debug.granular_scopes = granular;
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "account_mismatch" });
+    expect(pageReads()).toEqual([]);
+  });
+  it.each([Number.MAX_SAFE_INTEGER + 1, 0, -1, 4.5, "0", "04444", "../4444", {}])("refuses malformed or unsafe Page target %j", async value => {
+    targets([value]);
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "invalid_response" });
+    expect(pageReads()).toEqual([]);
+  });
+  it.each([
+    [{ scope: "pages_show_list", target_ids: "4444" }],
+    [{ scope: "pages_show_list", target_ids: Array.from({ length: 101 }, () => "4444") }],
+    Array.from({ length: 201 }, () => ({ scope: "pages_show_list", target_ids: ["4444"] })),
+  ].map(value => ({ value })))("bounds malformed granular metadata before reading identities: %j", async ({ value }) => {
+    debug.granular_scopes = value;
+    await expect(exchange()).rejects.toMatchObject({ stage: "token_metadata", reason: "invalid_response" });
+    expect(remote.mock.calls.some(([url]) => String(url).includes("graph.instagram.com"))).toBe(false);
+  });
+  it("rejects more than ten unique common Page targets without truncating", async () => {
+    targets(Array.from({ length: 11 }, (_, index) => String(4444 + index)));
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "incomplete_pages" });
+    expect(pageReads()).toEqual([]);
+  });
+  it("checks all ten candidates for ambiguity before the final selected Page read", async () => {
+    targets(Array.from({ length: 10 }, (_, index) => String(4444 + index)));
+    pages(Object.fromEntries(Array.from({ length: 9 }, (_, index) => {
+      const pageId = String(4445 + index);
+      return [pageId, () => body({ id: pageId, instagram_business_account: { id: "9999" } })];
+    })));
+    expect(await exchange()).toMatchObject({ pageId: "4444" });
+    expect(pageReads()).toHaveLength(11);
+    expect(pageReads().at(-1)).toBe("/v25.0/4444");
+  });
+  it("refuses multiple authorized Pages bound to the same Instagram identity", async () => {
+    targets(["4444", "4555"]);
+    pages({ "4555": () => body({ id: "4555", instagram_business_account: { id: "3333" } }) });
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "account_mismatch" });
+    expect(pageReads()).toEqual(["/v25.0/4444", "/v25.0/4555"]);
+  });
+  it.each([
+    { id: "4555", instagram_business_account: { id: "3333" } },
+    { id: "4444", instagram_business_account: { id: "9999" } },
+    { id: "4444" },
+  ])("does not substitute a mismatched Page or Instagram identity: %j", async value => {
+    targets(["4444"]); pages({ "4444": () => body(value) });
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "account_mismatch" });
+  });
+  it.each([403, 500])("fails closed if a later candidate cannot be read (HTTP %i)", async status => {
+    targets(["4444", "4555"]); pages({ "4555": () => new Response("private-provider-detail", { status }) });
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "provider_unavailable" });
+    expect(pageReads()).toEqual(["/v25.0/4444", "/v25.0/4555"]);
+  });
+  it("rejects a malformed later candidate instead of accepting an earlier match", async () => {
+    targets(["4444", "4555"]); pages({ "4555": () => body({ unexpected: true }) });
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "invalid_response" });
+  });
+  it("rejects a linked Instagram identity changed during the final recheck", async () => {
+    let reads = 0;
+    targets(["4444"]); pages({ "4444": () => body({ id: "4444", instagram_business_account: { id: ++reads === 1 ? "3333" : "9999" } }) });
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "account_mismatch" });
+    expect(reads).toBe(2);
+  });
+  it("does not fall back after incomplete enumeration", async () => {
+    targets(["4444"]); pageData = { data: [], paging: { next: "https://untrusted.example", cursors: {} } };
+    await expect(exchange()).rejects.toMatchObject({ stage: "linked_page", reason: "incomplete_pages" });
+    expect(pageReads()).toEqual([]);
+  });
+  it("keeps an enumerated match and its final recheck without reading other targets", async () => {
+    targets(["4555"]); pageData = { data: [{ id: "4444", instagram_business_account: { id: "3333" } }] };
+    expect(await exchange()).toMatchObject({ pageId: "4444" });
+    expect(pageReads()).toEqual(["/v25.0/4444"]);
+  });
+});
