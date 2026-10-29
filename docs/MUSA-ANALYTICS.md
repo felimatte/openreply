@@ -71,6 +71,36 @@ Las pruebas simuladas y la CI de ambos repositorios se informan por separado
 de la comprobación real. La publicación fue autorizada después; se ejecuta sólo
 con CI verde sobre main y respaldo previo a las migraciones.
 
+### Páginas omitidas de la enumeración
+
+El piloto del 29/10/2026 acreditó un token USER con los cuatro permisos y una
+Página vinculada consultable directamente, aunque `/me/accounts` devolvía una
+lista vacía. El contrato oficial de
+[debug_token](https://developers.facebook.com/docs/graph-api/reference/v26.0/debug_token)
+describe `granular_scopes` y sus `target_ids`; si el permiso aplica a todos los
+destinos, puede omitir la lista. Los destinos de un permiso de Instagram no
+identifican Páginas. Esta referencia documenta la forma de los datos; el flujo
+conserva la versión Graph configurada, sin migrarla por esta corrección.
+
+Cuando la enumeración completa no encuentra una coincidencia, el consentimiento
+sólo consulta IDs presentes en ambos permisos `pages_show_list` y
+`pages_read_engagement`, tras normalizarlos sin perder precisión y deduplicarlos.
+Una lista ausente, vacía, sin restricción o duplicada no amplía los candidatos.
+Una respuesta malformada cierra el flujo. Se permiten como máximo diez Páginas
+adicionales; superar el límite rechaza el intento sin truncarlo. Es un límite
+interno de seguridad, no una cuota de Meta. Se conserva el plazo compartido del
+callback y el origen Graph fijo; nunca se siguen URLs de paginación externas.
+
+Cada candidata debe devolver su mismo ID; se leen todas antes de exigir una
+única vinculación al ID de Instagram ya resuelto por Meta. Se conserva la
+relectura final de la Página y la comprobación transaccional de actor,
+concesión, generación y revocación antes de guardar el token. No se buscan
+nombres de usuario ni se elige la primera coincidencia. La enumeración
+incompleta, la ambigüedad, los errores de transporte y los cambios de identidad
+cierran el flujo. La corrección no amplía permisos ni altera vencimientos, y
+una conexión exitosa todavía requiere el ensayo del lector para acreditar
+Business Discovery.
+
 ### Consentimiento y preparación de producción
 
 El consentimiento comprueba la sesión de OpenReply, el propietario y la

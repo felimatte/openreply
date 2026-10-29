@@ -23,3 +23,6 @@ Conservar sin cambios expiración, scopes efectivos, identidad original y valida
 Instrucciones leídas: AGENTS.md, CLAUDE.md, guía local Next de Route Handlers y TRABAJO_EN_PARALELO.md de MUSA.
 Procesos/puertos: ninguno. Sólo pruebas simuladas y CI con servicios descartables; no consultar cuentas ni proveedores reales.
 Estado: en curso. Validación prevista: regresiones de destinos, ausencia y malformación, límites, ambigüedad, identidad, transporte; tipos/lint y CI completa sobre la punta final. Integración/publicación a cargo de /root.
+
+
+Cierre de implementación del fallback: 93 pruebas dirigidas simuladas aprobadas (proveedor, consentimiento/generación y diagnósticos), typecheck y lint de los archivos modificados aprobados. Revisión independiente del delta sin P1/P2. Incluye las regresiones de lista vacía, intersección/deduplicación, IDs inseguros, metadatos acotados, diez candidatas, rechazo sin truncar, ambigüedad, transporte, identidad cambiada en relectura y enumeración incompleta. PR11 permanece en borrador; CI completa remota pendiente sobre la punta que contiene estos cambios. Sin servicios ni proveedores reales, migraciones, integración o publicación por este agente.

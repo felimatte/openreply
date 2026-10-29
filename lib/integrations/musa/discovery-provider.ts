@@ -7,8 +7,12 @@ const id = z.string().regex(/^\d{1,40}$/);
 const tokenResult = z.object({ access_token: z.string().min(1).max(8192), expires_in: z.number().int().positive() });
 // Meta documents app_id as a JSON number as well as a string. Never round an unsafe ID.
 const appId = z.union([id, z.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(String)]);
+// Non-Page targets remain opaque: Instagram targets use a different identifier namespace.
+const granularScope = z.object({ scope: z.string().min(1).max(200), target_ids: z.array(z.unknown()).max(100).nullish() });
+const pageTargetId = z.union([z.string().regex(/^[1-9]\d{0,39}$/), z.number().int().positive().max(Number.MAX_SAFE_INTEGER).transform(String)]);
 const debugResult = z.object({ data: z.object({ app_id: appId, user_id: id, type: z.literal("USER"), is_valid: z.literal(true),
-  expires_at: z.number().int().positive(), data_access_expires_at: z.number().int().positive(), scopes: z.array(z.string()).max(200) }) });
+  expires_at: z.number().int().positive(), data_access_expires_at: z.number().int().positive(), scopes: z.array(z.string()).max(200),
+  granular_scopes: z.array(granularScope).max(200).optional() }) });
 const permissionResult = z.object({ data: z.array(z.object({ permission: z.string(), status: z.string() })).max(200) });
 const instagramIdentity = z.object({ id, user_id: id });
 const facebookIdentity = z.object({ id });
@@ -58,27 +62,52 @@ async function validateToken(token: string, signal: AbortSignal) {
   return data;
 }
 
-async function findOwnPage(token: string, instagramId: string, signal: AbortSignal): Promise<string> {
-  let after: string | undefined;
+/** Only common finite targets of both effective Page permissions may add candidates. */
+function authorizedPageTargets(scopes: z.infer<typeof granularScope>[] | undefined): string[] {
+  const targets = ["pages_show_list", "pages_read_engagement"].map(scope => {
+    const entries = scopes?.filter(item => item.scope === scope) ?? [];
+    // Missing/unrestricted or duplicate entries do not identify a bounded Page set.
+    if (entries.length !== 1 || !entries[0].target_ids?.length) return new Set<string>();
+    return new Set(z.array(pageTargetId).parse(entries[0].target_ids));
+  });
+  const common = [...targets[0]].filter(target => targets[1].has(target));
+  if (common.length > 10) throw new Error("DISCOVERY_INCOMPLETE_PAGES");
+  return common;
+}
+
+async function readLinkedPage(token: string, pageId: string, signal: AbortSignal) {
+  const linked = z.object({ id, instagram_business_account: z.object({ id }).optional() }).parse(await readJson(
+    graphUrl(pageId, { fields: "id,instagram_business_account{id}" }), token, signal));
+  if (linked.id !== pageId) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
+  return linked;
+}
+
+async function findOwnPage(token: string, instagramId: string, scopes: z.infer<typeof granularScope>[] | undefined, signal: AbortSignal): Promise<string> {
+  let after: string | undefined, exhausted = false;
   const matches = new Set<string>();
   for (let page = 0; page < 5; page++) {
     const response = pageResult.parse(await readJson(graphUrl("me/accounts", {
       fields: "id,instagram_business_account{id}", limit: "100", ...(after ? { after } : {}),
     }), token, signal));
     for (const item of response.data) if (item.instagram_business_account?.id === instagramId) matches.add(item.id);
-    if (!response.paging?.next) {
-      if (matches.size !== 1) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
-      const pageId = [...matches][0];
-      const linked = z.object({ id, instagram_business_account: z.object({ id }) }).parse(await readJson(
-        graphUrl(pageId, { fields: "id,instagram_business_account{id}" }), token, signal));
-      if (linked.id !== pageId || linked.instagram_business_account.id !== instagramId) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
-      return pageId;
-    }
+    if (!response.paging?.next) { exhausted = true; break; }
     const next = response.paging.cursors?.after;
     if (!next || next === after) throw new Error("DISCOVERY_INCOMPLETE_PAGES");
     after = next;
   }
-  throw new Error("DISCOVERY_INCOMPLETE_PAGES");
+  if (!exhausted) throw new Error("DISCOVERY_INCOMPLETE_PAGES");
+  // Some valid user tokens omit authorized Pages from /me/accounts. Never infer
+  // access from usernames or Instagram targets; Graph must verify every Page.
+  if (matches.size === 0) {
+    for (const pageId of authorizedPageTargets(scopes)) {
+      const linked = await readLinkedPage(token, pageId, signal);
+      if (linked.instagram_business_account?.id === instagramId) matches.add(pageId);
+    }
+  }
+  if (matches.size !== 1) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
+  const pageId = [...matches][0], linked = await readLinkedPage(token, pageId, signal);
+  if (linked.instagram_business_account?.id !== instagramId) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
+  return pageId;
 }
 
 export async function exchangeDiscoveryGrant(code: string, account: { instagramId: string; accessToken: string }, signal: AbortSignal) {
@@ -89,7 +118,7 @@ export async function exchangeDiscoveryGrant(code: string, account: { instagramI
   if (![own.id, own.user_id].includes(account.instagramId)) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
   // Prove cross-login resolution through Meta; a matching username is never evidence.
   const resolved = await discoveryStage("facebook_identity", async () => facebookIdentity.parse(await readJson(graphUrl(own.user_id, { fields: "id" }), token.access_token, signal)));
-  const pageId = await discoveryStage("linked_page", () => findOwnPage(token.access_token, resolved.id, signal));
+  const pageId = await discoveryStage("linked_page", () => findOwnPage(token.access_token, resolved.id, debug.granular_scopes, signal));
   const expiresAt = new Date(Math.min(Date.now() + token.expires_in * 1000, debug.expires_at * 1000, debug.data_access_expires_at * 1000));
   return { token: token.access_token, facebookUserId: debug.user_id, facebookInstagramId: resolved.id,
     instagramUserId: own.user_id, pageId, expiresAt, scopes: [...DISCOVERY_SCOPES] };
