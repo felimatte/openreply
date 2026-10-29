@@ -129,3 +129,23 @@ incluye resolver este fallo antes de activar la entrega.
 - Medios HTTPS del proveedor pueden vencer; su permalink no es una URL de video.
   Portada, reproducción y colección completa tienen capacidades separadas.
 
+
+## Continuación de competidores — 29/10/2026
+
+Felipe pidió completar la autorización de Facebook y dejar funcionando el análisis.
+Codex raíz es escritor e integrador de OpenReply; conserva el checkout exclusivo
+indicado arriba. Base remota verificada: `80758de56eccd29e258de87d4c4e1eee4110e3a9`;
+rama `codex/competidores-openreply-20261029`. MUSA se implementa por otro escritor
+en su checkout propio, con revisión final conjunta.
+
+La prueba real encontró primero un fallo de la conexión ya publicada: el formulario
+responde 400 antes de Facebook. Se separa esta reparación urgente para poder verificar
+el consentimiento real antes de activar Discovery. No modifica datos ni permisos.
+
+`Referrer-Policy: no-referrer` convierte Origin a null en el POST de navegación,
+según [Fetch](https://fetch.spec.whatwg.org/#append-a-request-origin-header).
+La página con formulario usa `strict-origin`: conserva el origen y no transmite
+la ruta ni el ticket. Se mantiene la validación estricta de Origin y no-referrer
+en errores, callback y redirect a Meta. La corrección se prueba con la política
+del formulario, el POST válido y rechazos de origen externo, nulo y ausente.
+CI exacta y recorrido real preceden al cierre; no se declara Discovery validado.

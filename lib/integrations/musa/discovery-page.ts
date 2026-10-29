@@ -14,7 +14,7 @@ export function discoveryPage(content: { title: string; message: string; ticket?
     ${content.connectedUntil ? `<p>Autorización guardada hasta ${escape(content.connectedUntil)}. La consulta de competidores todavía requiere su prueba de lectura.</p>` : ""}
     ${form}${content.returnUrl ? `<a href="${escape(content.returnUrl)}">Volver al negocio en Musa</a>` : '<a href="/settings#musa">Volver a OpenReply</a>'}</main></body></html>`, {
     status: content.status ?? 200, headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store",
-      "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+      "Referrer-Policy": content.ticket ? "strict-origin" : "no-referrer", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
       // Chromium also checks form-action on the POST's 303 redirect to Meta.
       "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://www.facebook.com; base-uri 'none'; frame-ancestors 'none'" },
   });

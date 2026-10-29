@@ -19,7 +19,7 @@ import { decryptToken } from "@/lib/meta/oauth";
 import { issueDiscoveryTicket, discoveryTicket, beginDiscovery, claimDiscovery, finishDiscovery, revokeDiscovery } from "@/lib/integrations/musa/discovery-authorization";
 import { POST as startRoute } from "@/app/integrations/musa/discovery/route";
 import { GET as callback } from "@/app/api/integrations/musa/discovery/callback/route";
-import { DISCOVERY_COOKIE } from "@/lib/integrations/musa/discovery-config";
+import { DISCOVERY_COOKIE, DISCOVERY_SCOPES } from "@/lib/integrations/musa/discovery-config";
 import { discoveryPage } from "@/lib/integrations/musa/discovery-page";
 
 const ticket = "t".repeat(43), state = "s".repeat(43), browser = "b".repeat(43);
@@ -100,12 +100,29 @@ describe("browser consent boundaries", () => {
   it("allows only the fixed Facebook origin for the form redirect and escapes rendered identities", async () => {
     const response = discoveryPage({ title: "Connect", message: "Review", business: '<script>alert(1)</script>', account: '<img src=x>', ticket });
     expect(response.headers.get("content-security-policy")).toContain("form-action 'self' https://www.facebook.com;");
+    expect(response.headers.get("referrer-policy")).toBe("strict-origin");
+    expect(discoveryPage({ title: "Error", message: "Retry" }).headers.get("referrer-policy")).toBe("no-referrer");
     const html = await response.text(); expect(html).not.toContain('<script>'); expect(html).not.toContain('<img');
     expect(html).toContain('&lt;script&gt;'); expect(html).toContain('action="/integrations/musa/discovery"');
   });
-  it("refuses a cross-origin consent POST before touching a flow", async () => {
-    const response = await startRoute(new Request("https://openreply.example/integrations/musa/discovery", { method: "POST", headers: { origin: "https://other.example" }, body: `ticket=${ticket}&intent=connect` }));
+  it.each(["https://other.example", "null", undefined])("refuses an invalid Origin before touching a flow: %s", async origin => {
+    const response = await startRoute(new Request("https://openreply.example/integrations/musa/discovery", { method: "POST", headers: origin ? { origin } : {}, body: `ticket=${ticket}&intent=connect` }));
     expect(response.status).toBe(400); expect(mocks.flowFind).not.toHaveBeenCalled();
+  });
+  it("starts an authorized same-origin POST with a bound cookie and fixed Facebook scope", async () => {
+    const response = await startRoute(new Request("https://openreply.example/integrations/musa/discovery", {
+      method: "POST", headers: { origin: "https://openreply.example" }, body: `ticket=${ticket}&intent=connect`,
+    }));
+    expect(response.status).toBe(303);
+    const destination = new URL(response.headers.get("location")!);
+    expect(destination.origin).toBe("https://www.facebook.com");
+    expect(destination.searchParams.get("redirect_uri")).toBe("https://openreply.example/api/integrations/musa/discovery/callback");
+    expect(destination.searchParams.get("scope")).toBe(DISCOVERY_SCOPES.join(","));
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    const cookie = response.headers.get("set-cookie")!;
+    for (const flag of ["HttpOnly", "Secure", "SameSite=lax", "Path=/api/integrations/musa/discovery/callback"]) expect(cookie).toContain(flag);
+    expect(mocks.flowUpdate).toHaveBeenCalledOnce();
+    expect(mocks.exchange).not.toHaveBeenCalled();
   });
   it("does not exchange a code without its browser cookie", async () => {
     const response = await callback(new NextRequest(`https://openreply.example/api/integrations/musa/discovery/callback?state=${state}&code=test`));
