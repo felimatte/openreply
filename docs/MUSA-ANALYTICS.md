@@ -149,3 +149,28 @@ la ruta ni el ticket. Se mantiene la validación estricta de Origin y no-referre
 en errores, callback y redirect a Meta. La corrección se prueba con la política
 del formulario, el POST válido y rechazos de origen externo, nulo y ausente.
 CI exacta y recorrido real preceden al cierre; no se declara Discovery validado.
+
+
+### Lector de competidores — asignación del 29/10/2026
+
+Traspaso explícito de Codex raíz a `revisar_activacion_competidores`, único escritor
+OpenReply desde `13ce04782ff7f6db9a87aa6fff7325ff61118ee2`, rama
+`codex/lector-competidores-20261029`, mismo checkout exclusivo. Codex raíz integra;
+MUSA conserva escritor y checkout propios. No se comparten procesos ni escritura.
+
+Alcance: lector Business Discovery, contrato v1 y capacidades por cuenta. Revalidar
+concesión adicional, actor, cuenta y sobre cifrado; no cambiar la autorización,
+publicación ni automatizaciones. Cursores separados por objetivo estable, handle,
+generación adicional y rango. Usar presupuesto Redis existente, respuestas acotadas
+y cancelación/deadline. Sin migración OpenReply prevista, sin worker ni cron nuevos.
+Sólo los datos públicos acreditados: métricas privadas de terceros indisponibles.
+
+Piloto elegido por Felipe: `@nacho.mirandap`, `@agustinbadt`, `@nachomedinna`.
+El consentimiento real y la lectura permanecen a cargo de Codex raíz; las pruebas
+simuladas del lector no acreditan acceso Meta. El SDK25.0.3 confirma campos, no
+permisos efectivos; la documentación Discovery devolvió429. La paginación anidada
+no exige `paging.next`: se reconstruye desde cursor en origen fijo; no seguir URLs.
+
+Validación prevista: contratos, permisos, caducidad/revocación, identidad y cambios
+de handle, cuota, errores, formatos y paginación; tipos/lint y CI sobre la punta
+exacta. Mantener PR en borrador hasta revisión del integrador y prueba real.
