@@ -49,6 +49,19 @@ export async function readAnalytics(context: InstagramContext, path: string, que
   if (!/^\/[a-zA-Z0-9_/-]+$/.test(path) || path.includes("..") || path.startsWith("//")) throw new AnalyticsReadError("unsupported");
   const origin = context.provider === "META" ? `https://graph.instagram.com/${getMetaGraphApiVersion()}` : "https://zernio.com/api/v1";
   const token = context.provider === "META" ? context.accessToken : context.apiKey;
+  return readProvider(context, origin, token, path, query, signal);
+}
+
+/** Only the independent Facebook grant may read Discovery; origin is never caller supplied. */
+export async function readFacebookAnalytics(context: InstagramContext, token: string, path: string,
+  query: URLSearchParams, signal: AbortSignal): Promise<unknown> {
+  if (context.provider !== "META" || !/^\/[a-zA-Z0-9_/-]+$/.test(path) || path.includes("..") || path.startsWith("//"))
+    throw new AnalyticsReadError("unsupported");
+  return readProvider(context, `https://graph.facebook.com/${getMetaGraphApiVersion()}`, token, path, query, signal);
+}
+
+async function readProvider(context: InstagramContext, origin: string, token: string, path: string,
+  query: URLSearchParams, signal: AbortSignal): Promise<unknown> {
   try {
     signal.throwIfAborted();
     const budget = budgets.get(context);
