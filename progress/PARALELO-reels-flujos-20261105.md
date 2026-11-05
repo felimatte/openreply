@@ -52,3 +52,19 @@ Validación nueva tras terminar capa SQL:
 - Prueba de typecheck regeneró cliente Prisma en este checkout únicamente. No se cambiaron dependencias ni se copiaron secretos.
 
 Publicación futura requiere aplicar migración OpenReply antes de su procesador compatible con bundles; MUSA necesita su 0074 antes de frontend nuevo. No revertir a procesador de raíz sola con cadenas pendientes. Nada integrado, subido ni desplegado.
+
+## Autorización de publicación y preparación — 05/11/2026
+
+Felipe aprobó la pantalla del primer paso y pidió publicarlo. La sesión raíz autorizó conservar y subir la rama feature para crear PR/CI; todavía NO autorizó ejecutar merge, migración ni despliegue desde este subagente. La revisión independiente final del commit c335cc9 no encontró nuevos hallazgos accionables.
+
+Preparación viva:
+- Git remoto main verificado b3ad9c37121430fd8f64dd9fe9de63b6a382b3f1; checkout limpio c335cc9 antes de esta nota.
+- CLI Vercel65.2.0 cacheada y sesión personal autorizada verificadas sin extraer tokens. Proyecto openreply/prj_9uqrLmzwUh9YuzsWGSvzfciaby33, team_Meqe8XNgJOelZsANVBCgtdAy; enlace Git felimatte/openreply/main, deployments enabled y autoAssignCustomDomains=true.
+- Producción actual observada dpl_99DhP6xLMAnZ9dhvmnLX4yT42BYC READY, código main b3ad9c3, dominio openreply-nine-delta.vercel.app. Es el punto actual para reversión de aplicación, por verificar otra vez al publicar.
+- Advertencia operativa: merge main puede aplicar prisma migrate deploy y asignar dominio automáticamente. RESPALDO VERIFICADO ANTES DEL MERGE. --prod --skip-domain también ejecuta migración durante build y requiere respaldo previo.
+- Preview de esta rama carece DATABASE_URL/REDIS_URL/ENCRYPTION_KEY (disponibilidad booleana por CLI env run, no valores): push/PR puede disparar preview fallido antes de acceder DB; no usar credenciales Production en Preview para remediarlo.
+- Variables Production requeridas existen como Secret; el CLI no puede descargarlas. El original canónico sí conserva .env.local/.env.worker; raíz autorizó usarlos sólo en proceso para comparar identidad y hacer inventario SQL read-only, sin mostrar valores ni copiar archivos.
+- Health público: DB/Redis/cola responden, worker sin latido (degraded503). Se conserva el motor apagado; publicar web/procesador no implica iniciar workerDM.
+- Backups privados anteriores: carpeta Marca personal/OpenReply-respaldos, snapshotsJSON del25/10 de3.9MB; no incorporarlos a Git. Se prepara respaldo nuevo antes de cualquier migración; raíz lo autorizó sin escrituras DB.
+
+Se sube sólo esta feature y sus fuentes/reporte sintético. Fichas personales de cuentas y respaldo DB quedan fuera del repositorio público. Orden restante coordinado por raíz: PR/CI sobre punta exacta, validar respaldo/destino, merge/despliegue compatibles OpenReply, después0074+MUSA, verificación sin publicaciones/mensajes reales.
