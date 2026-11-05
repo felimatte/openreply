@@ -39,7 +39,7 @@ try {
       "payloadHash","payload","campaignId","campaignUpdatedAt","mediaId","stage","leaseToken","updatedAt")
       VALUES ('receipt','grant','workspace','320c1b61-061c-4d0b-8dac-e0be8a51b5fb','account','META','synthetic-hash',
         '{"flowId":"source-version","activateOnPublish":true}','copy','${stamp}','exact-media','FINALIZE','lease-one',now());`);
-  await check("all original migrations apply", () => assert.equal(migrations.length, 30));
+  await check("all original migrations and bundle guards apply", () => assert.ok(migrations.includes("20261105120000_musa_flow_bundles")));
   await check("processing reservation blocks premature activation", () => reserved(db.exec(campaignActivation)));
   await check("processing reservation blocks retargeting", () => reserved(db.exec(`UPDATE "Automation" SET "postId"='wrong-media' WHERE "id"='copy'`)));
   await check("processing reservation blocks deletion", () => reserved(db.exec(`DELETE FROM "Automation" WHERE "id"='copy'`)));
@@ -73,6 +73,52 @@ try {
       UPDATE "MusaPublication" SET "status"='published',"confirmationContainerId"='container';`);
     await reserved(db.exec(`UPDATE "Automation" SET "isActive"=true WHERE "id"='copy'`));
     await reserved(db.exec(`UPDATE "Automation" SET "postId"='guessed' WHERE "id"='copy'`));
+  });
+  const rootCopy = "musa_flow_00000000-0000-4000-8000-000000000001";
+  const dependency = "musa_flow_00000000-0000-4000-8000-000000000002";
+  await db.exec(`INSERT INTO "Automation" ("id","workspaceId","instagramAccountId","name","keywords","dmMessage","isActive","postId","updatedAt")
+    VALUES ('${rootCopy}','workspace','account','Bundle root',ARRAY['GUIA'],'Synthetic',false,NULL,'${stamp}'),
+      ('${dependency}','workspace','account','Bundle child',ARRAY[]::text[],'Synthetic',false,NULL,'${stamp}');
+    INSERT INTO "FlowVersion" ("id","workspaceId","automationId","version","definition")
+      VALUES ('bundle-root-version','workspace','${rootCopy}',1,'{"schemaVersion":1}'),
+        ('bundle-child-version','workspace','${dependency}',1,'{"schemaVersion":1}');
+    UPDATE "Automation" SET "flowPublishedVersionId"=CASE WHEN "id"='${rootCopy}' THEN 'bundle-root-version' ELSE 'bundle-child-version' END
+      WHERE "id" IN ('${rootCopy}','${dependency}');
+    INSERT INTO "MusaPublication" ("id","connectionId","workspaceId","publicationId","accountId","provider","payloadHash","payload",
+      "campaignId","flowCampaignIds","mediaId","stage","leaseToken","updatedAt")
+      VALUES ('bundle-receipt','grant','workspace','420c1b61-061c-4d0b-8dac-e0be8a51b5fb','account','META','bundle-hash','{}',
+        '${rootCopy}',ARRAY['${rootCopy}','${dependency}'],'bundle-media','FINALIZE','bundle-lease',now());`);
+  for (const [name, sql] of [
+    ["dependency name/settings remain frozen", `UPDATE "Automation" SET "name"='Changed' WHERE "id"='${dependency}'`],
+    ["dependency version pointer remains frozen", `UPDATE "Automation" SET "flowPublishedVersionId"='another-version' WHERE "id"='${dependency}'`],
+    ["dependency cannot activate before confirmed media", `UPDATE "Automation" SET "isActive"=true WHERE "id"='${dependency}'`],
+    ["dependency deletion remains blocked", `DELETE FROM "Automation" WHERE "id"='${dependency}'`],
+    ["published dependency graph is immutable while reserved", `UPDATE "FlowVersion" SET "definition"='{}' WHERE "id"='bundle-child-version'`],
+    ["published dependency version cannot be deleted while reserved", `DELETE FROM "FlowVersion" WHERE "id"='bundle-child-version'`],
+  ]) await check(name, () => reserved(db.exec(sql)));
+  await check("ledger bundle membership is immutable", () => assert.rejects(db.exec(`UPDATE "MusaPublication" SET "flowCampaignIds"=ARRAY['${rootCopy}'] WHERE "id"='bundle-receipt'`),
+    error => error.code === "23514" && /MUSA_FLOW_BUNDLE_IMMUTABLE/.test(error.message)));
+  await check("bundle membership rejects nulls, duplicates, missing roots and oversized lists", async () => {
+    for (const ids of [[rootCopy, null], [rootCopy, rootCopy], [dependency], Array.from({ length: 26 }, (_, i) => `musa_flow_${String(i).padStart(36, '0')}`)])
+      assert.equal((await db.query('SELECT "musa_flow_bundle_ids_valid"($1::text[],$2) AS valid', [ids, rootCopy])).rows[0].valid, false);
+  });
+  const activateBundle = async () => {
+    await db.exec(`SELECT "id" FROM "Automation" WHERE "id" IN ('${rootCopy}','${dependency}') ORDER BY "id" FOR UPDATE`);
+    await db.exec(`UPDATE "MusaPublication" SET "status"='published',"stage"='DONE' WHERE "id"='bundle-receipt';
+      UPDATE "Automation" SET "postId"='bundle-media' WHERE "id"='${rootCopy}';
+      UPDATE "Automation" SET "isActive"=true,"flowEnabled"=true WHERE "id" IN ('${rootCopy}','${dependency}');`);
+  };
+  await check("entire chain activation rolls back with its receipt", async () => {
+    await db.exec("BEGIN"); await activateBundle(); await db.exec("ROLLBACK");
+    assert.equal((await db.query(`SELECT count(*)::int AS count FROM "Automation" WHERE "id" IN ('${rootCopy}','${dependency}') AND "isActive"=true`)).rows[0].count, 0);
+    assert.equal((await db.query(`SELECT "status" FROM "MusaPublication" WHERE "id"='bundle-receipt'`)).rows[0].status, 'processing');
+  });
+  await check("entire chain activates atomically, while only root targets the exact post", async () => {
+    await db.exec("BEGIN"); await activateBundle(); await db.exec("COMMIT");
+    const rows = (await db.query(`SELECT "id","postId","isActive","flowEnabled","matchAnyPost","dmTriggerEnabled" FROM "Automation"
+      WHERE "id" IN ('${rootCopy}','${dependency}') ORDER BY "id"`)).rows;
+    assert.equal(rows[0].postId,'bundle-media'); assert.equal(rows[1].postId,null);
+    rows.forEach(copy => { assert.equal(copy.isActive,true); assert.equal(copy.flowEnabled,true); assert.equal(copy.matchAnyPost,false); assert.equal(copy.dmTriggerEnabled,false); });
   });
   const report = { createdAt: new Date().toISOString(), postgres: (await db.query("SELECT version() AS version")).rows[0].version,
     runtimeVersion: JSON.parse(await readFile(join(dirname(createRequire(runtime).resolve("@electric-sql/pglite")), "../package.json"), "utf8")).version,

@@ -9,7 +9,7 @@ export async function GET(request: Request) {
     const context = await requireMusaConnection(request);
     const account = requireMusaAccount(context, new URL(request.url).searchParams.get("accountId"));
     const campaigns = await prisma.automation.findMany({
-      where: { workspaceId: context.workspaceId, instagramAccountId: account.id },
+      where: { workspaceId: context.workspaceId, instagramAccountId: account.id, id: { not: { startsWith: "musa_flow_" } } },
       select: { id: true, name: true, isActive: true, postId: true, pendingNextReel: true, matchAnyPost: true, dmTriggerEnabled: true },
       orderBy: [{ createdAt: "desc" }, { id: "asc" }],
     });

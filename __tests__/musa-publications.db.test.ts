@@ -17,6 +17,7 @@ import { advanceMusaPublication, getMusaPublication } from "@/lib/integrations/m
 import { isCampaignReservedForMusaPublication } from "@/lib/integrations/musa/publications-reservation";
 import { listMusaFlows, musaFlowRevision } from "@/lib/integrations/musa/flows";
 import { createDefaultFlow } from "@/lib/flows/definition";
+import { flowSource } from "./fixtures/musa-flow-source";
 
 const databaseUrl = process.env.MUSA_TEST_DATABASE_URL;
 describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", () => {
@@ -29,10 +30,10 @@ describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", 
     workspaceId, instagramAccountId: account.id, name: "QA publication draft", keywords: ["qa"],
     dmMessage: "Never sent", isActive: false, pendingNextReel: true,
   } });
-  const makeFlow = async () => {
+  const makeFlow = async (targets: string[] = []) => {
     const source = await makeCampaign();
     const version = await prisma.flowVersion.create({ data: { workspaceId, automationId: source.id,
-      version: 1, definition: createDefaultFlow() as unknown as Prisma.InputJsonValue } });
+      version: 1, definition: (targets.length ? flowSource("fixture", targets).definition : createDefaultFlow()) as unknown as Prisma.InputJsonValue } });
     const automation = await prisma.automation.update({ where: { id: source.id },
       data: { flowPublishedVersionId: version.id, flowEnabled: true } });
     return { source: automation, payload: { ...body(), flowId: version.id,
@@ -117,8 +118,36 @@ describe.skipIf(!databaseUrl)("MUSA publication concurrency on local Postgres", 
   it("changed source settings cannot publish under a previously confirmed flow revision", async () => {
     const { source, payload } = await makeFlow();
     await prisma.automation.update({ where: { id: source.id }, data: { keywords: ["changed"] } });
-    await expect(advanceMusaPublication(context, randomUUID(), payload)).rejects.toMatchObject({ status: 409, code: "FLOW_CHANGED" });
+    expect(await advanceMusaPublication(context, randomUUID(), payload)).toMatchObject({ status: "failed", errorCode: "FLOW_CHANGED",
+      automation: { status: "failed", errorCode: "FLOW_CHANGED" } });
     expect(remote.create).not.toHaveBeenCalled(); expect(remote.publish).not.toHaveBeenCalled();
+  });
+  it("copies, reserves and activates a complete chain while protecting its private dependencies", async () => {
+    const child = await makeFlow(); const root = await makeFlow([child.source.id]);
+    const entry = (await listMusaFlows(context, account.id)).flows.find(flow => flow.id === root.payload.flowId)!;
+    const payload = { ...root.payload, flowRevision: entry.revision }; const id = randomUUID();
+    await advanceMusaPublication(context, id, payload);
+    const receipt = await prisma.musaPublication.findUniqueOrThrow({ where: { publicationId: id } });
+    expect(receipt.flowCampaignIds).toHaveLength(2);
+    expect(receipt.flowCampaignIds).not.toContain(root.source.id); expect(receipt.flowCampaignIds).not.toContain(child.source.id);
+    const childCopyId = receipt.flowCampaignIds.find(copyId => copyId !== receipt.campaignId)!;
+    expect(await isCampaignReservedForMusaPublication(childCopyId, workspaceId)).toBe(true);
+    await expect(prisma.automation.update({ where: { id: childCopyId }, data: { name: "Changed while reserved" } })).rejects.toThrow();
+    await expect(prisma.automation.delete({ where: { id: childCopyId } })).rejects.toThrow();
+    await expect(prisma.flowVersion.updateMany({ where: { automationId: childCopyId }, data: { definition: {} } })).rejects.toThrow();
+    await expect(prisma.musaPublication.update({ where: { id: receipt.id }, data: { flowCampaignIds: [receipt.campaignId!] } })).rejects.toThrow();
+    const rootCopy = await prisma.automation.findUniqueOrThrow({ where: { id: receipt.campaignId! } });
+    const graph = rootCopy.flowDraft as unknown as { nodes: Array<{ type: string; data: { action?: string; automationId?: string } }> };
+    expect(graph.nodes.find(node => node.type === "action" && node.data.action === "start_flow")?.data.automationId).toBe(childCopyId);
+    await prisma.musaPublication.update({ where: { id: receipt.id }, data: { stage: "FINALIZE", mediaId: "chain-exact-media" } });
+    expect(await advanceMusaPublication(context, id, payload)).toMatchObject({ status: "published", automation: { status: "active" } });
+    const copies = await prisma.automation.findMany({ where: { id: { in: receipt.flowCampaignIds } } });
+    copies.forEach(copy => expect(copy).toMatchObject({ isActive: true, flowEnabled: true, matchAnyPost: false, dmTriggerEnabled: false }));
+    expect(copies.find(copy => copy.id === childCopyId)?.postId).toBeNull();
+    expect(copies.find(copy => copy.id === receipt.campaignId)?.postId).toBe("chain-exact-media");
+    expect((await prisma.automation.findUniqueOrThrow({ where: { id: root.source.id } })).isActive).toBe(root.source.isActive);
+    expect((await prisma.automation.findUniqueOrThrow({ where: { id: child.source.id } })).isActive).toBe(child.source.isActive);
+    expect(remote.publish).not.toHaveBeenCalled();
   });
   it("reserves one campaign atomically between different publication UUIDs", async () => {
     const campaign = await makeCampaign();

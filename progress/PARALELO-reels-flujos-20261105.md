@@ -33,3 +33,22 @@ Validación final:
 Sin migraciones nuevas, .env, proveedores, bases, motores, Redis ni publicaciones reales. Ningún archivo MUSA modificado. Revisión independiente delegada intentada, no disponible por límite global de agentes; integrador raíz revisó contrato y pidió corregir invariantes de automation (corregidas y probadas).
 
 Estado: lista para revisión/integración por raíz, commit local solicitado por integrador; no push, PR, merge ni despliegue. Esta rama y ruta quedan preservadas. Registro progress ignorado por regla original: se agrega explícitamente con git add -f junto a evidencia sintética.
+
+## Actualización — cadenas de flujos completas y rechazos durables
+
+Felipe pidió también las cadenas completas; prevalece sobre la exclusión temporal propuesta de start_flow. La raíz autorizó máximo cinco aristas (límite actual del engine), 25 Automation distintas, rechazo explícito de ciclos y deduplicación de diamantes. Se copian fuentes/dependencias publicadas aunque estén pausadas; originales permanecen intactos.
+
+- GET /flows conserva el contrato y ahora calcula SHA256 sobre TODAS las versiones/grafos/configuraciones transitivas. Razones específicas: FLOW_DEPENDENCY_CHANGED, FLOW_VERSION_CHANGED, FLOW_INVALID, FLOW_TRIGGER_REQUIRED, FLOW_CHAIN_CYCLE, FLOW_CHAIN_DEPTH_LIMIT y FLOW_CHAIN_SIZE_LIMIT.
+- Resolver BFS por capas y dos createMany (Automation + FlowVersion) acotan viajes dentro de transacción. Todos los IDs se generan primero; cada start_flow se reescribe a un ID propio del bundle de esa publicación. Max-depth usa altura de DAG con caché y detección de ciclos, incluyendo el camino largo de diamantes.
+- Migración aditiva OpenReply 20261105120000_musa_flow_bundles agrega flowCampaignIds TEXT[] NOT NULL DEFAULT[], validación de pertenencia/tamaño/duplicados/nulls, GIN y snapshots inmutables del bundle/input/root. Reservas protegen configuración completa y versiones de TODAS las copias durante processing/uncertain o publicación sin mediaId exacto. Helper de reserva y API legacy rechazan selección de copias privadas como campaña independiente.
+- Finalización bloquea las copias ordenadas y prevalida el conjunto íntegro antes de mutar; vincula sólo raíz al mediaId confirmado y activa todas en una transacción. Dependencias quedan sin post, matchAnyPost=false y dmTriggerEnabled=false: el dispatcher sólo las alcanza mediante start_flow remapeado. Conflicto conserva publicación con todas las copias pausadas.
+- FLOW_CHANGED/dependencias/límites inválidos son rechazo antes de copiar o contactar proveedor. Crean ledger failed/DONE con mismo UUID/hash dentro de transacción. Índice único arbitra contra aceptaciones concurrentes: catch relee ganador y valida hash/cuenta/proveedor. No se clasifica HTTP409 como prueba de que nadie publicó, ni se convierten fallos DB desconocidos sin ledger en éxito. Pruebas intercalan fuente cambiada tras primer commit, relectura de ganador y rechazo de payload distinto.
+
+Validación nueva tras terminar capa SQL:
+- Tipos y lint: correctos.
+- Suite completa: 72 archivos correctos /9 omitidos; 1167 pruebas correctas /77 omitidas.
+- Batería focal: 187 correctas /15 PostgreSQL omitidas; incluye cadena copiada/remapeada, fuentes pausadas, hash transitivo, límites/ciclos/diamantes y activación integral o ninguna.
+- SQL PostgreSQL WASM PGlite0.5.15: 31 migraciones originales sin cambios +19 comprobaciones correctas. Prueba guarda de configuración y versiones dependientes, membership inmutable, rollback y commit de todo el conjunto, y dependencias activas sin post/DM/any-post. No acredita Prisma real ni concurrencia entre sesiones. Suite Prisma DB agregada para CI, omitida localmente.
+- Prueba de typecheck regeneró cliente Prisma en este checkout únicamente. No se cambiaron dependencias ni se copiaron secretos.
+
+Publicación futura requiere aplicar migración OpenReply antes de su procesador compatible con bundles; MUSA necesita su 0074 antes de frontend nuevo. No revertir a procesador de raíz sola con cadenas pendientes. Nada integrado, subido ni desplegado.

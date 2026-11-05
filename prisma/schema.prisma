@@ -831,6 +831,7 @@ model MusaPublication {
   stage               String @default("PREPARE")
   campaignId          String? @unique
   campaignUpdatedAt   DateTime?
+  flowCampaignIds     String[] @default([])
   containerId         String?
   childContainerIds   String[] @default([])
   confirmationContainerId String?

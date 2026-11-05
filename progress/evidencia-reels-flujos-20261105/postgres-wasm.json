@@ -1,5 +1,5 @@
 {
-  "createdAt": "2026-11-05T23:12:57.371Z",
+  "createdAt": "2026-11-05T23:33:47.864Z",
   "postgres": "PostgreSQL 18.6 (PGlite 0.5.15) on wasm32-unknown-emscripten, compiled by emcc (Emscripten gcc/clang-like replacement + linker emulating GNU ld) 6.0.13 (e13ee988ce3d87a738dd8f3661d02223308c412a), 32-bit",
   "runtimeVersion": "0.5.15",
   "migrations": [
@@ -32,10 +32,11 @@
     "20261011123000_musa_workspace_binding",
     "20261020130000_musa_publication_confirmation",
     "20261025120000_musa_multiformat",
-    "20261028180000_musa_discovery_authorization"
+    "20261028180000_musa_discovery_authorization",
+    "20261105120000_musa_flow_bundles"
   ],
   "checks": [
-    "all original migrations apply",
+    "all original migrations and bundle guards apply",
     "processing reservation blocks premature activation",
     "processing reservation blocks retargeting",
     "processing reservation blocks deletion",
@@ -43,8 +44,18 @@
     "exact media binding and activation commit atomically with the published receipt",
     "activation CAS cannot run again for an already bound campaign",
     "source flow campaign retains its existing post and activation",
-    "exact Meta container proof without a media ID still prevents activation"
+    "exact Meta container proof without a media ID still prevents activation",
+    "dependency name/settings remain frozen",
+    "dependency version pointer remains frozen",
+    "dependency cannot activate before confirmed media",
+    "dependency deletion remains blocked",
+    "published dependency graph is immutable while reserved",
+    "published dependency version cannot be deleted while reserved",
+    "ledger bundle membership is immutable",
+    "bundle membership rejects nulls, duplicates, missing roots and oversized lists",
+    "entire chain activation rolls back with its receipt",
+    "entire chain activates atomically, while only root targets the exact post"
   ],
-  "passed": 9,
+  "passed": 19,
   "limitations": "Direct SQL and original triggers; not Prisma transport or independent-session concurrency."
 }
