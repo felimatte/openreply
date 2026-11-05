@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   createMeta: vi.fn(), pollMeta: vi.fn(), quota: vi.fn(), publishMeta: vi.fn(), permalink: vi.fn(),
   createChild: vi.fn(), createParent: vi.fn(),
   createZernio: vi.fn(), pollZernio: vi.fn(), readZernio: vi.fn(),
+  copyFlow: vi.fn(),
 }));
+vi.mock("@/lib/integrations/musa/flows", () => ({ copyMusaPublicationFlow: mocks.copyFlow }));
 vi.mock("@/lib/db/client", () => ({ prisma: { musaPublication: mocks.receipt, automation: mocks.campaign, $transaction: mocks.transaction } }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: mocks.context }));
 vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPublishingCapability: mocks.capability }));
@@ -72,10 +74,63 @@ beforeEach(() => {
   mocks.quota.mockResolvedValue(true); mocks.publishMeta.mockResolvedValue("media-a");
   mocks.permalink.mockResolvedValue("https://www.instagram.com/reel/confirmed/");
   mocks.campaign.updateMany.mockResolvedValue({ count: 1 });
+  mocks.copyFlow.mockResolvedValue({ id: "musa_flow_copy-a", updatedAt: baseTime });
 });
 afterEach(() => vi.useRealTimers());
 
 describe("durable MUSA publication", () => {
+  const flow = { ...input, flowId: "version-a", flowRevision: "a".repeat(64), activateOnPublish: true as const };
+  const flowRecord = (extra: Partial<MusaPublication> = {}) => record({ payload: flow, payloadHash: publicationPayloadHash(flow),
+    campaignId: "musa_flow_copy-a", campaignUpdatedAt: baseTime, ...extra });
+  it("creates one private flow copy for the stable publication UUID, including retries", async () => {
+    mocks.campaign.findFirst.mockResolvedValue({ isActive: false, postId: null, matchAnyPost: false, dmTriggerEnabled: false });
+    await advanceMusaPublication(context, publicationId, flow);
+    await advanceMusaPublication(context, publicationId, flow);
+    expect(mocks.copyFlow).toHaveBeenCalledTimes(1);
+    expect(stored).toMatchObject({ campaignId: "musa_flow_copy-a", payload: flow });
+    expect(mocks.campaign.updateMany).not.toHaveBeenCalled();
+  });
+  it("rejects a flow revision change before provider writes", async () => {
+    mocks.copyFlow.mockRejectedValue(Object.assign(new Error("changed"), { status: 409 }));
+    await expect(advanceMusaPublication(context, publicationId, flow)).rejects.toMatchObject({ status: 409 });
+    expect(mocks.receipt.create).not.toHaveBeenCalled(); expect(mocks.createMeta).not.toHaveBeenCalled();
+  });
+  it("activates only the private copy atomically for the exact confirmed media", async () => {
+    stored = flowRecord({ stage: "FINALIZE", mediaId: "media-a" });
+    expect(await advanceMusaPublication(context, publicationId, flow)).toMatchObject({ status: "published",
+      automation: { status: "active", errorCode: null } });
+    expect(mocks.campaign.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ id: "musa_flow_copy-a", postId: null, isActive: false }),
+      data: expect.objectContaining({ postId: "media-a", isActive: true, flowEnabled: true }),
+    }));
+    await advanceMusaPublication(context, publicationId, flow);
+    expect(mocks.campaign.updateMany).toHaveBeenCalledTimes(1); expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("GET can finalize and activate a known media ID without another Instagram publish", async () => {
+    stored = flowRecord({ stage: "FINALIZE", mediaId: "media-a" });
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({ status: "published", automation: { status: "active" } });
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("reports automation failure separately when exact container confirmation lacks a media ID", async () => {
+    stored = flowRecord({ stage: "META_PUBLISHING", containerId: "container-a", status: "uncertain" });
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({ status: "published", mediaId: null,
+      automation: { status: "failed", errorCode: "MEDIA_ID_UNAVAILABLE" } });
+    expect(mocks.campaign.updateMany).not.toHaveBeenCalled(); expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("keeps an already published Reel when flow binding conflicts", async () => {
+    stored = flowRecord({ stage: "FINALIZE", mediaId: "media-a" });
+    mocks.campaign.updateMany.mockResolvedValue({ count: 0 });
+    expect(await advanceMusaPublication(context, publicationId, flow)).toMatchObject({ status: "published", mediaId: "media-a",
+      automation: { status: "failed", errorCode: "CAMPAIGN_BINDING_CONFLICT" } });
+    expect(mocks.publishMeta).not.toHaveBeenCalled();
+  });
+  it("keeps pending automation errors null and gives failed automation a definite code", async () => {
+    stored = flowRecord({ stage: "META_PUBLISHING", status: "uncertain", containerId: null, errorCode: "PUBLICATION_CONFIRMATION_REQUIRED" });
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({ automation: { status: "pending", errorCode: null } });
+    stored = flowRecord({ status: "failed", errorCode: null });
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({ automation: { status: "failed", errorCode: "FLOW_PUBLICATION_FAILED" } });
+  });
   it("never accepts an account outside the grant", async () => {
     await expect(advanceMusaPublication(context, publicationId, { ...input, accountId: "other" })).rejects.toMatchObject({ status: 403 });
     expect(mocks.receipt.create).not.toHaveBeenCalled();

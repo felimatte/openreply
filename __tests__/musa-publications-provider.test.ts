@@ -16,6 +16,20 @@ beforeEach(() => {
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("publication provider boundary", () => {
+  it.each(["MANUAL", "SS_PERFORMANCE"] as const)("preserves Meta trial strategy %s without publishing a normal Reel", async graduationStrategy => {
+    fetchMock.mockResolvedValue(Response.json({ id: "trial-container" }));
+    await createMetaContainer(meta, "ig-a", { ...input, trialReel: { graduationStrategy } });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ media_type: "REELS",
+      trial_params: { graduation_strategy: graduationStrategy } });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it.each(["MANUAL", "SS_PERFORMANCE"] as const)("preserves Zernio trial strategy %s and thumbnail", async graduationStrategy => {
+    fetchMock.mockResolvedValue(Response.json({ post: { _id: "trial-post" } }));
+    await createZernioPublication(zernio, { ...input, trialReel: { graduationStrategy } }, "stable-trial-key", new Date("2026-11-06T15:00:30Z"));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).platforms).toEqual([{ platform: "instagram", accountId: "remote-a",
+      platformSpecificData: { instagramThumbnail: input.coverUrl, trialParams: { graduationStrategy } } }]);
+    expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe("stable-trial-key");
+  });
   it("creates a feed image instead of a Reel", async () => {
     fetchMock.mockResolvedValue(Response.json({ id: "image-a" }));
     await createMetaContainer(meta, "ig-a", { accountId: "account-a", caption: "Foto", format: "image",

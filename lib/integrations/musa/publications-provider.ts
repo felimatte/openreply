@@ -65,7 +65,8 @@ export async function createMetaContainer(context: InstagramContext, instagramId
   if (format === "carousel") throw new MusaProviderError("PUBLICATION_STATE_INVALID");
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
     method: "POST", body: { ...(format === "image" ? { image_url: media[0].url }
-      : { media_type: "REELS", video_url: media[0].url, ...(cover ? { cover_url: cover } : {}) }), caption: input.caption },
+      : { media_type: "REELS", video_url: media[0].url, ...(cover ? { cover_url: cover } : {}),
+        ...(input.trialReel ? { trial_params: { graduation_strategy: input.trialReel.graduationStrategy } } : {}) }), caption: input.caption },
   });
   const parsed = remoteId.safeParse(raw);
   if (!parsed.success) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", true);
@@ -140,13 +141,15 @@ export function readZernioPublication(raw: unknown, accountId: string) {
 export async function createZernioPublication(context: Extract<InstagramContext, { provider: "ZERNIO" }>,
   input: MusaPublicationInput, publicationId: string, scheduledAt: Date) {
   const cover = publicationCover(input);
+  const platformSpecificData = { ...(cover ? { instagramThumbnail: cover } : {}),
+    ...(input.trialReel ? { trialParams: { graduationStrategy: input.trialReel.graduationStrategy } } : {}) };
   return publicationProviderRequest(context, "/posts", { method: "POST", idempotencyKey: publicationId,
     body: { content: input.caption, mediaItems: publicationMedia(input),
       // A near-future schedule delegates video processing to Zernio's worker.
       // publishNow is synchronous and can exceed a serverless request lifetime.
       scheduledFor: scheduledAt.toISOString(), timezone: "UTC",
       platforms: [{ platform: "instagram", accountId: context.accountId,
-        ...(cover ? { platformSpecificData: { instagramThumbnail: cover } } : {}) }],
+        ...(Object.keys(platformSpecificData).length ? { platformSpecificData } : {}) }],
       metadata: { musaPublicationId: publicationId } },
   });
 }
