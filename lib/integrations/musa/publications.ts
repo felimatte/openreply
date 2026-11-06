@@ -7,6 +7,7 @@ import { MusaIntegrationError } from "./errors";
 import { getMusaPublishingCapability } from "./publications-capabilities";
 import { isMusaCampaignAttachable, musaPublicationInputSchema, publicationFormat, publicationPayloadHash, type MusaPublicationInput } from "./publications-policy";
 import { advanceMetaCarousel } from "./publications-carousel";
+import { copyMusaPublicationFlow } from "./flows";
 import { createMetaContainer, createZernioPublication, getZernioPublication, metaContainerStatus,
   metaMediaPermalink, metaPublishingQuota, MusaProviderError, publishMetaContainer, readZernioPublication } from "./publications-provider";
 
@@ -17,9 +18,16 @@ const scope = (context: MusaConnectionContext, publicationId: string) => ({
 });
 
 export function musaPublicationResult(row: MusaPublication) {
+  const input = musaPublicationInputSchema.safeParse(row.payload);
+  const hasFlow = input.success && Boolean(input.data.flowId);
+  const automation = hasFlow ? { automation: row.status === "published"
+    ? { status: row.errorCode || !row.mediaId ? "failed" as const : "active" as const,
+      errorCode: !row.mediaId ? "MEDIA_ID_UNAVAILABLE" : row.errorCode }
+    : row.status === "failed" ? { status: "failed" as const, errorCode: row.errorCode ?? "FLOW_PUBLICATION_FAILED" }
+      : { status: "pending" as const, errorCode: null } } : {};
   return { version: 1 as const, publicationId: row.publicationId,
     status: row.status as "processing" | "published" | "failed" | "uncertain",
-    mediaId: row.mediaId, permalink: row.permalink, errorCode: row.errorCode,
+    mediaId: row.mediaId, permalink: row.permalink, errorCode: row.errorCode, ...automation,
     ...(row.status === "published" && row.provider === "META" && !row.mediaId && !row.permalink
       && row.confirmationContainerId && /^[a-zA-Z0-9_-]{1,128}$/.test(row.confirmationContainerId)
       && row.confirmationContainerId === row.containerId
@@ -106,6 +114,24 @@ async function ensurePublication(context: MusaConnectionContext, publicationId: 
     try {
       row = await prisma.$transaction(async (tx) => {
         let campaignUpdatedAt: Date | null = null;
+        let campaignId = payload.campaignId ?? null;
+        let flowCampaignIds: string[] = [];
+        if (payload.flowId && payload.flowRevision) {
+          try {
+            const copy = await copyMusaPublicationFlow(tx, context, account.id, payload.flowId, payload.flowRevision);
+            campaignId = copy.id;
+            campaignUpdatedAt = copy.updatedAt;
+            flowCampaignIds = copy.flowCampaignIds;
+          } catch (error) {
+            // Only these pre-copy validations prove that THIS attempt has not sent anything.
+            // The unique UUID arbitrates with concurrent accepted attempts before returning a terminal receipt.
+            if (!(error instanceof MusaIntegrationError) ||
+              !["FLOW_CHANGED", "FLOW_DEPENDENCY_CHANGED", "FLOW_VERSION_CHANGED", "FLOW_INVALID", "FLOW_TRIGGER_REQUIRED",
+                "FLOW_CHAIN_CYCLE", "FLOW_CHAIN_DEPTH_LIMIT", "FLOW_CHAIN_SIZE_LIMIT"].includes(error.code)) throw error;
+            return tx.musaPublication.create({ data: { ...where, accountId: account.id, provider: account.provider,
+              payloadHash, payload, campaignId: null, status: "failed", stage: "DONE", errorCode: error.code } });
+          }
+        }
         if (payload.campaignId) {
           // The reservation and a competing campaign activation serialize here.
           await tx.$queryRaw`SELECT "id" FROM "Automation" WHERE "id" = ${payload.campaignId} FOR UPDATE`;
@@ -117,13 +143,16 @@ async function ensurePublication(context: MusaConnectionContext, publicationId: 
           campaignUpdatedAt = campaign.updatedAt;
         }
         return tx.musaPublication.create({ data: { ...where, accountId: account.id, provider: account.provider,
-          payloadHash, payload, campaignId: payload.campaignId ?? null, campaignUpdatedAt } });
+          payloadHash, payload, campaignId, campaignUpdatedAt, flowCampaignIds } });
       }, transactionOptions);
     } catch (error) {
-      if (!(error && typeof error === "object" && "code" in error && error.code === "P2002")) throw error;
-      // A simultaneous PUT may have won; a different reservation/key is a conflict.
+      // Any losing validation/create attempt must accept the already committed winner for this exact payload.
       row = await prisma.musaPublication.findFirst({ where });
-      if (!row) throw new MusaIntegrationError(409, "PUBLICATION_CONFLICT", "Publication or campaign is already reserved");
+      if (!row) {
+        if (error && typeof error === "object" && "code" in error && error.code === "P2002")
+          throw new MusaIntegrationError(409, "PUBLICATION_CONFLICT", "Publication or campaign is already reserved");
+        throw error;
+      }
     }
   }
   if (row.payloadHash !== payloadHash || row.accountId !== account.id || row.provider !== account.provider)
@@ -135,23 +164,38 @@ async function assertCampaignUnchanged(row: MusaPublication) {
   if (!row.campaignId) return;
   const campaign = await prisma.automation.findFirst({ where: { id: row.campaignId,
     workspaceId: row.workspaceId, instagramAccountId: row.accountId, updatedAt: row.campaignUpdatedAt ?? undefined } });
-  if (!campaign || !isMusaCampaignAttachable(campaign)) throw new MusaProviderError("CAMPAIGN_CONFLICT");
+  if (!campaign || !isMusaCampaignAttachable(campaign, row.flowCampaignIds.length > 0)) throw new MusaProviderError("CAMPAIGN_CONFLICT");
 }
 
 async function finishPublication(row: MusaPublication, leaseToken: string, permalink: string | null) {
+  const payload = musaPublicationInputSchema.parse(row.payload);
   return prisma.$transaction(async (tx) => {
+    let bundleReady = true;
+    if (row.flowCampaignIds.length) {
+      await tx.$queryRaw`SELECT "id" FROM "Automation" WHERE "id" = ANY(${row.flowCampaignIds}::text[]) ORDER BY "id" FOR UPDATE`;
+      const copies = await tx.automation.findMany({ where: { id: { in: row.flowCampaignIds }, workspaceId: row.workspaceId,
+        instagramAccountId: row.accountId, isActive: false, flowEnabled: false, postId: null,
+        matchAnyPost: false, dmTriggerEnabled: false, flowPublishedVersionId: { not: null } }, select: { id: true } });
+      bundleReady = copies.length === row.flowCampaignIds.length;
+    }
     const saved = await tx.musaPublication.updateMany({ where: { id: row.id, leaseToken }, data: {
-      status: "published", stage: "DONE", permalink, publishedAt: new Date(), errorCode: null, confirmationContainerId: null, nextAttemptAt: null,
+      status: "published", stage: "DONE", permalink, publishedAt: new Date(), errorCode: bundleReady ? null : "CAMPAIGN_BINDING_CONFLICT", confirmationContainerId: null, nextAttemptAt: null,
     } });
-    if (!saved.count) return;
+    if (!saved.count || !bundleReady) return;
     if (row.campaignId) {
       const bound = await tx.automation.updateMany({ where: {
         id: row.campaignId, workspaceId: row.workspaceId, instagramAccountId: row.accountId,
         updatedAt: row.campaignUpdatedAt ?? undefined,
         isActive: false, postId: null, matchAnyPost: false, dmTriggerEnabled: false,
-      }, data: { postId: row.mediaId, postUrl: permalink, pendingNextReel: false, nextReelArmedAt: null } });
+      }, data: { postId: row.mediaId, postUrl: permalink, pendingNextReel: false, nextReelArmedAt: null,
+        ...(payload.flowId && payload.activateOnPublish && !row.flowCampaignIds.length ? { isActive: true, flowEnabled: true } : {}) } });
       if (!bound.count) await tx.musaPublication.updateMany({ where: { id: row.id, leaseToken },
         data: { errorCode: "CAMPAIGN_BINDING_CONFLICT" } });
+      else if (row.flowCampaignIds.length) {
+        const activated = await tx.automation.updateMany({ where: { id: { in: row.flowCampaignIds }, workspaceId: row.workspaceId,
+          instagramAccountId: row.accountId, isActive: false, flowEnabled: false }, data: { isActive: true, flowEnabled: true } });
+        if (activated.count !== row.flowCampaignIds.length) throw new Error("MUSA_FLOW_BUNDLE_CHANGED");
+      }
     }
   }, transactionOptions);
 }
@@ -257,7 +301,8 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
       // Losing read/auth access does not cancel a post already handed to Zernio.
       // A previous create response may also have been lost. Do not invite a new UUID.
       await save({ status: "uncertain", errorCode: error.code });
-    } else await save({ status: "failed", errorCode: error.code, campaignId: null, campaignUpdatedAt: null });
+    } else await save({ status: "failed", errorCode: error.code,
+      ...(!input.flowId ? { campaignId: null, campaignUpdatedAt: null } : {}) });
   } finally {
     await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken }, data: { leaseToken: null, leaseUntil: null } });
   }

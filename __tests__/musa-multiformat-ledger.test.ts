@@ -38,7 +38,7 @@ let row: MusaPublication;
 function seed(payload: MusaPublicationInput = carousel, extra: Partial<MusaPublication> = {}) {
   row = { id: "receipt-a", connectionId: context.connectionId, workspaceId: context.workspaceId, publicationId: id,
     accountId: "account-a", provider: "META", payloadHash: publicationPayloadHash(payload), payload,
-    status: "processing", stage: "PREPARE", campaignId: null, campaignUpdatedAt: null, containerId: null,
+    status: "processing", stage: "PREPARE", campaignId: null, campaignUpdatedAt: null, flowCampaignIds: [], containerId: null,
     childContainerIds: [], confirmationContainerId: null, providerPostId: null, providerScheduledAt: null,
     mediaId: null, permalink: null, errorCode: null, leaseToken: null, leaseUntil: null, nextAttemptAt: null,
     attemptStartedAt: null, publishedAt: null, createdAt: now, updatedAt: now, ...extra };
