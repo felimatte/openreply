@@ -1,6 +1,23 @@
 # Continuar OpenReply en otro dispositivo
 
-Estado actualizado el **9 de octubre de 2026**. Este archivo resume el trabajo para retomarlo sin depender del historial del chat.
+Estado actualizado el **25 de octubre de 2026**. Este archivo resume el trabajo para retomarlo sin depender del historial del chat.
+
+## Última entrega: calendario de MUSA
+
+Leer primero el [registro de publicación multiformato del 25 de octubre](docs/musa-release-2026-10-25.md).
+El PR #5 está integrado y publicado: OpenReply admite Reels, imágenes y carruseles
+desde MUSA, con la migración aplicada y la CI del PR aprobada. La revisión visual
+sigue pendiente por el bloqueo de Edge; el ensayo posterior usó servicios simulados
+y no publicó en Instagram.
+
+En la comprobación de esta entrega, la base, Redis y la cola respondían, pero el
+worker de mensajes estaba intencionalmente apagado y `/api/health` conservaba `503`.
+Las menciones a un worker activo en las notas siguientes describen su fecha histórica.
+No iniciar otro worker conectado a producción para retomar el desarrollo.
+
+## Antecedentes hasta el 9 de octubre de 2026
+
+Se conservan las notas anteriores con sus fechas y comprobaciones originales.
 
 ## Proyecto y objetivo
 
