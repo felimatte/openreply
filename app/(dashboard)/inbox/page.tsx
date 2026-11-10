@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
+import MessageField from "@/components/message-field";
 import { getWorkspaceStorageKey, readCache, writeCache } from "@/lib/client-cache";
 import type { ConversationListItem } from "@/app/api/instagram/conversations/route";
 import type { ThreadMessage } from "@/app/api/instagram/conversations/[id]/route";
@@ -393,7 +394,22 @@ export default function InboxPage() {
             <div className="shrink-0 border-t border-border p-4 sm:px-6">
               {sendError && <p role="alert" className="mb-3 rounded-lg bg-error/5 p-3 text-xs text-error">{sendError}</p>}
               <div className="flex items-end gap-3 rounded-xl border border-border bg-background p-2 focus-within:border-accent/40">
-                <textarea disabled={sending || active.detailsUnavailable || !active.contact.id} value={draft} onChange={(e) => { setDraft(e.target.value); draftsRef.current[active.id] = e.target.value; }} onKeyDown={handleKeyDown} rows={2} aria-label={t("Reply")} title={t("Write a reply…  (Enter to send, Shift+Enter for a new line)")} placeholder={t("Write a reply…")} className="max-h-40 min-h-[56px] min-w-0 flex-1 resize-y border-0 bg-transparent px-2 py-1 text-sm leading-6 text-foreground placeholder:text-muted outline-none disabled:opacity-50" />
+                <MessageField
+                  key={active.id}
+                  pickerAbove
+                  disabled={sending || active.detailsUnavailable || !active.contact.id}
+                  value={draft}
+                  onValueChange={(value) => {
+                    setDraft(value);
+                    draftsRef.current[active.id] = value;
+                  }}
+                  onKeyDown={handleKeyDown}
+                  rows={2}
+                  aria-label={t("Reply")}
+                  title={t("Write a reply…  (Enter to send, Shift+Enter for a new line)")}
+                  placeholder={t("Write a reply…")}
+                  className="max-h-40 min-h-[56px] resize-y border-0 bg-transparent px-2 py-1 text-sm leading-6 text-foreground placeholder:text-muted outline-none disabled:opacity-50"
+                />
                 <button type="button" onClick={() => void handleSend()} disabled={sending || !draft.trim() || !active.contact.id || active.detailsUnavailable} className="shrink-0 rounded-lg bg-accent px-4 py-2.5 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-40">{sending ? t("Sending…") : t("Send")} <span aria-hidden="true">↗</span></button>
               </div>
             </div>

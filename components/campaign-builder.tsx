@@ -21,6 +21,7 @@ import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
 import FlowBuilder, { type FlowBuilderHandle } from "@/components/flow-builder";
+import MessageField from "@/components/message-field";
 import { createDefaultFlow, parseFlowDefinition, validateFlowDefinition, type FlowDefinition } from "@/lib/flows/definition";
 import { campaignEntryIssues } from "@/components/flows/campaign-entry";
 import FlowIcon from "@/components/flows/flow-icon";
@@ -948,11 +949,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             <div id="campaign-public-reply" className="space-y-2">
               {publicReplyMessages.map((msg, i) => (
                 <div key={i} className="flex items-center gap-2">
-                  <input
+                  <MessageField
                     value={msg}
-                    onChange={(e) =>
+                    onValueChange={(value) =>
                       setPublicReplyMessages((prev) =>
-                        prev.map((m, idx) => (idx === i ? e.target.value : m))
+                        prev.map((m, idx) => (idx === i ? value : m))
                       )
                     }
                     placeholder={t("Sent you a DM! 📩")}
@@ -1006,9 +1007,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             </div>
             {openingDmEnabled && (
               <div className="mt-3 space-y-2">
-                <textarea
+                <MessageField
                   value={openingDmMessage}
-                  onChange={(e) => setOpeningDmMessage(e.target.value)}
+                  onValueChange={setOpeningDmMessage}
                   placeholder={t("Hey there! I'm so happy you're here 😊")}
                   rows={3}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
@@ -1036,9 +1037,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             </div>
             {requireFollow && (
               <div className="mt-3 space-y-2">
-                <textarea
+                <MessageField
                   value={followPromptMessage}
-                  onChange={(e) => setFollowPromptMessage(e.target.value)}
+                  onValueChange={setFollowPromptMessage}
                   placeholder={t("quick favor before i send your link. i don't make any money from this, it's free. if you want to support me, just don't unfollow after, and star the repo on github if it helps you. tap the button once you're following and i'll send it over")}
                   rows={3}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
@@ -1062,9 +1063,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         <Section title={t("And then, they will get")}>
           <div className="rounded-lg border border-border p-3 space-y-2">
             <span className="text-sm text-foreground">{t("a DM with a link")}</span>
-            <textarea
+            <MessageField
               value={dmMessage}
-              onChange={(e) => setDmMessage(e.target.value)}
+              onValueChange={setDmMessage}
               placeholder={t("Write a message")}
               rows={3}
               className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
@@ -1137,9 +1138,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             </div>
             {followUpEnabled && (
               <div className="mt-3 space-y-2">
-                <textarea
+                <MessageField
                   value={followUpMessage}
-                  onChange={(e) => setFollowUpMessage(e.target.value)}
+                  onValueChange={setFollowUpMessage}
                   placeholder={t("Btw just wanted to say thanks for following me, I appreciate the support 🙌")}
                   rows={3}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
@@ -1221,9 +1222,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                     </datalist>
                   </div>
                 )}
-                <textarea
+                <MessageField
                   value={askMessage}
-                  onChange={(e) => setAskMessage(e.target.value)}
+                  onValueChange={setAskMessage}
                   placeholder={
                     askType === "EMAIL"
                       ? t("Where should I send it? Drop your email 👇")
@@ -1237,9 +1238,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 />
                 {askType !== "TEXT" && (
                   <div className="space-y-1">
-                    <input
+                    <MessageField
                       value={askRetryMessage}
-                      onChange={(e) => setAskRetryMessage(e.target.value)}
+                      onValueChange={setAskRetryMessage}
                       placeholder={t("Hmm, that doesn't look right. Could you send it again?")}
                       maxLength={1000}
                       className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
@@ -1260,9 +1261,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                   </Radio>
                 </div>
                 {askAfterLink && (
-                  <input
+                  <MessageField
                     value={askThanksMessage}
-                    onChange={(e) => setAskThanksMessage(e.target.value)}
+                    onValueChange={setAskThanksMessage}
                     placeholder={t("Thanks! Got it 🙌 (optional)")}
                     maxLength={1000}
                     className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import EmojiPicker from "@/components/emoji-picker";
 import { filterMessageVariables, getSlashQuery, insertMessageVariable, type MessageVariable, type SlashQuery } from "@/lib/flows/message-variables";
 import "./variable-textarea.css";
 
@@ -79,7 +80,20 @@ export default function VariableTextarea({ id, label, value, onChange, onBlur, c
         }
       }}
     />
-    <div className="flow-variable-tools"><span id={hintId}>Escribí / para personalizar</span><button type="button" aria-label={`Insertar dato en ${label}`} onMouseDown={(event) => event.preventDefault()} onClick={openPicker}>/ Insertar dato</button></div>
+    <div className="flow-variable-tools">
+      <span id={hintId}>Escribí / para personalizar</span>
+      <button type="button" className="flow-variable-trigger" aria-label={`Insertar dato en ${label}`} onMouseDown={(event) => event.preventDefault()} onClick={openPicker}>/ Insertar dato</button>
+      <EmojiPicker
+        fieldRef={textarea}
+        label="Agregar emoji"
+        value={value}
+        onValueChange={(next) => {
+          setDismissed(true);
+          setManualRange(null);
+          onChange(next);
+        }}
+      />
+    </div>
     {query && <div className="flow-variable-picker">
       <div className="flow-variable-heading"><span>Datos para este mensaje</span><small>↑ ↓ · Enter</small></div>
       <div ref={menu} role="listbox" id={listId} aria-label={`Datos para ${label}`} className="flow-variable-options">
