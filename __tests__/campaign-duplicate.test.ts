@@ -146,6 +146,21 @@ describe("duplicateCampaign", () => {
     expect(createArgs().data.createdAt).toBeUndefined();
   });
 
+  it("copies a scheduled Reel as a fresh draft without the confirmed post or reservation identity", async () => {
+    mockPrisma.automation.findFirst.mockResolvedValue({
+      ...sourceCampaign, dmTriggerEnabled: false,
+      musaScheduledPublicationId: "d7ae33f6-0233-4437-9a3a-28eab6144204",
+      musaScheduledRequestId: "eeb9e9d8-c270-4615-9e7e-64c177a92782",
+    });
+
+    await duplicateCampaign({ automationId: "automation_123", workspaceId: "workspace_123" });
+    expect(createArgs().data).toMatchObject({
+      musaScheduledPublicationId: "d7ae33f6-0233-4437-9a3a-28eab6144204",
+      postId: null, postUrl: null, isActive: false, flowPublishedVersionId: null,
+    });
+    expect(createArgs().data.musaScheduledRequestId).not.toBe("eeb9e9d8-c270-4615-9e7e-64c177a92782");
+  });
+
   it("keeps the copied name within the 100 character limit", () => {
     const longName = "a".repeat(100);
     const duplicated = buildDuplicateName(longName);

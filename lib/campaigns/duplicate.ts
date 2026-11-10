@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/client";
 import { Prisma } from "@/app/generated/prisma/client";
 import { generateReportShareSlug } from "@/lib/reports/share";
@@ -47,7 +48,7 @@ export async function duplicateCampaign({
     include: { trackedLinks: { orderBy: TRACKED_LINK_ORDER } },
   });
 
-  if (!source) return null;
+  if (!source || source.id.startsWith("musa_flow_scheduled_")) return null;
 
   // Every setting on the row carries over. The links are recreated rather than
   // spread, since they are rows of their own.
@@ -69,6 +70,11 @@ export async function duplicateCampaign({
       flowPublishedVersionId: null,
       flowDraft: settings.flowDraft ?? Prisma.DbNull,
       flowDraftRevision: 0,
+      ...(settings.musaScheduledPublicationId ? {
+        musaScheduledRequestId: randomUUID(),
+        postId: null,
+        postUrl: null,
+      } : {}),
       nextReelArmedAt: null,
       reportShareSlug: generateReportShareSlug(),
       trackedLinks: {
