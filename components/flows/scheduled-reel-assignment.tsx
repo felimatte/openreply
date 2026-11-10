@@ -5,6 +5,7 @@ interface Assignment {
   status: "draft" | "waiting" | "active" | "cancelled" | "failed" | "unconfirmed";
   publicationId: string;
   requestId?: string;
+  code?: string;
   title?: string;
   scheduledAt?: string;
   timezone?: string;
@@ -26,6 +27,13 @@ const DETAILS: Record<Assignment["status"], string> = {
   cancelled: "Podés vincular otro Reel. Tu flujo está guardado.",
   failed: "Revisá la programación en MUSA o elegí otro Reel. Tu flujo está guardado.",
   unconfirmed: "Volvé a intentar con el mismo Reel para recuperar la respuesta.",
+};
+
+const WAITING_DETAILS: Record<string, string> = {
+  media_id_pending: "Instagram confirmó la publicación. El vínculo espera el identificador del Reel.",
+  activation_unconfirmed: "El Reel está publicado. La activación del flujo todavía no se pudo confirmar.",
+  MUSA_UNAVAILABLE: "No pudimos actualizar el estado de MUSA. Tu vínculo se conserva.",
+  MUSA_NOT_CONNECTED: "No pudimos comprobar el permiso de esta cuenta. Revisalo en MUSA y actualizá el estado.",
 };
 
 export default function ScheduledReelAssignment({
@@ -102,7 +110,8 @@ export default function ScheduledReelAssignment({
         {assignment.scheduledAt && assignment.timezone && (
           <p className="text-sm text-muted">{scheduledReelTime({ scheduledAt: assignment.scheduledAt, timezone: assignment.timezone })}</p>
         )}
-        <p className="text-sm text-muted">{DETAILS[assignment.status]}</p>
+        <p className="text-sm text-muted">{assignment.status === "waiting" && assignment.code
+          ? WAITING_DETAILS[assignment.code] ?? DETAILS.waiting : DETAILS[assignment.status]}</p>
       </> : !error && <p className="text-sm text-muted">Consultando el vínculo…</p>}
     </div>
     {canEdit && mayReplace && (
