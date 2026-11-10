@@ -5,7 +5,7 @@ import type { InstagramAccount, MusaConnection, Prisma } from "@/app/generated/p
 import { hashMusaCredential, type MusaConnectionContext } from "@/lib/integrations/musa/auth";
 import { registerSchedulerGrant } from "@/lib/integrations/musa/scheduler";
 import { publishScheduledCampaign, readScheduledCampaign } from "@/lib/integrations/musa/scheduled-reels";
-import { activateScheduledReel } from "@/lib/integrations/musa/scheduled-reel-activation";
+import { activateScheduledReel, setScheduledCampaignActive } from "@/lib/integrations/musa/scheduled-reel-activation";
 import { replayMusaScheduledComments } from "@/lib/integrations/musa/scheduled-reel-comments";
 import { flowSource } from "./fixtures/musa-flow-source";
 
@@ -20,7 +20,7 @@ describe.skipIf(!databaseUrl)("OpenReply exact scheduled Reel against local Post
   let account: InstagramAccount;
   let connection: MusaConnection;
   let context: MusaConnectionContext;
-  let remoteStatus: "waiting" | "cancelled";
+  let remoteStatus: "waiting" | "cancelled" | "revoked";
   const replies = new Map<string, string>();
   const remote = vi.fn(async (url: URL, options?: RequestInit) => {
     expect(url.origin).toBe("http://127.0.0.1:31007");
@@ -37,6 +37,7 @@ describe.skipIf(!databaseUrl)("OpenReply exact scheduled Reel against local Post
     expect(url.searchParams.get("instagramId")).toBe(account.instagramId);
     const id = url.pathname.split("/").at(-1);
     if (id === "scheduled-reels") return Response.json({ version: 1, reels: [] });
+    if (remoteStatus === "revoked") return Response.json({ version: 1, error: { code: "INVALID_GRANT" } }, { status: 401 });
     const attempt = await prisma.musaScheduledReel.findUniqueOrThrow({ where: { reservationId: id } });
     return Response.json({ version: 1, reservationId: id, status: remoteStatus,
       publicationId: attempt.publicationId, title: "Reel de prueba", scheduledAt: "2026-11-11T16:00:00Z", timezone: "America/Argentina/Buenos_Aires" });
@@ -123,12 +124,37 @@ describe.skipIf(!databaseUrl)("OpenReply exact scheduled Reel against local Post
     });
     await expect(activateScheduledReel(context, saved.reservationId!, { ...payload, mediaId: "wrong-id" }))
       .rejects.toMatchObject({ code: "RESERVATION_CONFLICT" });
+    const afterActivation = await prisma.webhookEvent.create({ data: { workspaceId, object: "instagram",
+      payload: { ...incoming, entry: [{ ...incoming.entry[0], changes: [{
+        field: "comments", value: { id: "eligible-overlap", media: { id: payload.mediaId }, from: { id: "contact" }, text: "qa" },
+      }] }] } } });
+    expect(afterActivation.createdAt.getTime()).toBeGreaterThanOrEqual(
+      (await prisma.musaScheduledReel.findUniqueOrThrow({ where: { requestId } })).activatedAt!.getTime());
     await replayMusaScheduledComments();
     await replayMusaScheduledComments();
-    expect(queue.add).toHaveBeenCalledTimes(1);
-    expect(queue.add).toHaveBeenCalledWith("process-comment", expect.objectContaining({
-      commentId: "eligible-early", mediaId: payload.mediaId, accountConnectionId: account.id,
-    }), expect.anything());
+    expect(queue.add).toHaveBeenCalledTimes(2);
+    for (const commentId of ["eligible-early", "eligible-overlap"]) {
+      expect(queue.add).toHaveBeenCalledWith("process-comment", expect.objectContaining({
+        commentId, mediaId: payload.mediaId, accountConnectionId: account.id, targetScheduledAutomationId: campaign.id,
+      }), expect.anything());
+    }
+    const activeCampaign = await prisma.automation.findUniqueOrThrow({ where: { id: campaign.id } });
+    await setScheduledCampaignActive(activeCampaign, false);
+    await activateScheduledReel(context, saved.reservationId!, payload);
+    expect(await prisma.automation.count({ where: { id: { in: saved.flowCampaignIds }, isActive: true } })).toBe(0);
+    await setScheduledCampaignActive(activeCampaign, true);
+    expect(await prisma.automation.count({ where: { id: { in: saved.flowCampaignIds }, isActive: true } })).toBe(2);
+  });
+
+  it("rechecks the exact reservation remotely and releases a waiting draft when MUSA revokes it", async () => {
+    const campaign = await makeDraft(randomUUID());
+    const view = await publishScheduledCampaign(campaign, { publicationId: campaign.musaScheduledPublicationId! });
+    const pending = await prisma.musaScheduledReel.findUniqueOrThrow({ where: { reservationId: view.reservationId } });
+    remoteStatus = "revoked";
+    await expect(activateScheduledReel(context, pending.reservationId!, activation(view, campaign.id, pending.flowVersionId)))
+      .rejects.toMatchObject({ code: "MUSA_REVERSE_REVOKED" });
+    expect(await readScheduledCampaign(campaign)).toMatchObject({ status: "cancelled", code: "MUSA_REVERSE_REVOKED" });
+    expect(await prisma.automation.findUnique({ where: { id: campaign.id } })).toMatchObject({ isActive: false, postId: null });
   });
 
   it("retains the draft for reselection after cancellation and closes the pending reservation on revocation", async () => {
@@ -143,6 +169,6 @@ describe.skipIf(!databaseUrl)("OpenReply exact scheduled Reel against local Post
     expect(await prisma.musaSchedulerGrant.findFirst({ where: { connectionId: connection.id } })).toBeNull();
     expect(await readScheduledCampaign(campaign)).toMatchObject({ status: "cancelled", code: "MUSA_NOT_CONNECTED" });
     await expect(activateScheduledReel(context, pending.reservationId!, activation(next, campaign.id, pending.flowVersionId)))
-      .rejects.toMatchObject({ code: "GRANT_REVOKED" });
+      .rejects.toMatchObject({ code: "RESERVATION_CONFLICT" });
   });
 });

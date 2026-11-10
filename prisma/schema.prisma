@@ -893,6 +893,7 @@ model MusaScheduledReel {
   mediaId         String?
   activatedAt     DateTime?
   replayDueAt     DateTime?
+  replayUntil     DateTime?
   replayCursorId  String?
   replayCursorAt  DateTime?
   createdAt       DateTime @default(now())

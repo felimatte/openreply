@@ -14,7 +14,9 @@ const scheduledReel = z.object({
 });
 const remoteStatus = z.enum(["waiting", "active", "cancelled", "failed"]);
 const reservation = z.object({ version: z.literal(1), reservationId: z.uuid(), status: remoteStatus });
-const reservationDetails = reservation.extend(scheduledReel.shape);
+const reservationDetails = reservation.extend({ ...scheduledReel.shape,
+  reason: z.enum(["media_id_pending", "activation_unconfirmed"]).optional(),
+});
 const list = z.object({ version: z.literal(1), reels: z.array(scheduledReel).max(100) });
 
 export type Scheduler = {
@@ -95,8 +97,13 @@ async function callScheduler<T>(scheduler: Scheduler, schema: z.ZodType<T>, rese
         ...(body ? { "Content-Type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}),
     });
-    if (response.status === 401 || response.status === 403)
-      throw new MusaIntegrationError(409, "MUSA_NOT_CONNECTED", "La conexión de esta cuenta con MUSA ya no está disponible.");
+    if (response.status === 401 || response.status === 403) {
+      const result = z.object({ version: z.literal(1), error: z.object({ code: z.string() }) })
+        .safeParse(await response.json().catch(() => null));
+      const revoked = response.status === 401 && result.success && result.data.error.code === "INVALID_GRANT";
+      throw new MusaIntegrationError(409, revoked ? "MUSA_REVERSE_REVOKED" : "MUSA_NOT_CONNECTED",
+        "La conexión de esta cuenta con MUSA ya no está disponible.");
+    }
     if (response.status === 404 && reservationId)
       throw new MusaIntegrationError(404, "MUSA_RESERVATION_GONE", "La conexión actual ya no puede ver esa reserva.");
     if (response.status === 409 && body)

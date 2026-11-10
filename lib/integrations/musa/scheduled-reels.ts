@@ -33,9 +33,9 @@ export async function readScheduledCampaign(campaign: Automation): Promise<Reser
     throw new MusaIntegrationError(404, "CAMPAIGN_NOT_FOUND", "No encontramos el flujo programado.");
   const attempt = await findLatestAttempt(campaign.id);
   if (!attempt) return { status: "draft", publicationId: campaign.musaScheduledPublicationId };
-  if (!attempt.reservationId || attempt.status !== "waiting") return reservationView(attempt);
+  if (!attempt.reservationId || (attempt.status !== "waiting" && attempt.status !== "active")) return reservationView(attempt);
   try {
-    const scheduler = await requireScheduler(campaign.workspaceId, campaign.instagramAccountId, attempt.connectionId);
+    const scheduler = await requireStatusScheduler(campaign, attempt);
     const remote = await getScheduledReel(scheduler, attempt.reservationId);
     if (remote.reservationId !== attempt.reservationId || remote.publicationId !== attempt.publicationId)
       throw new MusaIntegrationError(503, "MUSA_UNAVAILABLE", "No pudimos comprobar el Reel de MUSA.");
@@ -44,9 +44,10 @@ export async function readScheduledCampaign(campaign: Automation): Promise<Reser
         data: { status: remote.status } });
     }
     const current = await prisma.musaScheduledReel.findUniqueOrThrow({ where: { requestId: attempt.requestId } });
-    return { ...reservationView(current), title: remote.title, scheduledAt: remote.scheduledAt, timezone: remote.timezone };
+    return { ...reservationView(current), title: remote.title, scheduledAt: remote.scheduledAt, timezone: remote.timezone,
+      ...(current.status === "waiting" && remote.reason ? { code: remote.reason } : {}) };
   } catch (error) {
-    if (error instanceof MusaIntegrationError && error.code === "MUSA_RESERVATION_GONE") {
+    if (error instanceof MusaIntegrationError && ["MUSA_RESERVATION_GONE", "MUSA_REVERSE_REVOKED"].includes(error.code)) {
       await prisma.musaScheduledReel.updateMany({ where: { requestId: attempt.requestId, status: "waiting" },
         data: { status: "cancelled", errorCode: error.code } });
     }
@@ -54,6 +55,19 @@ export async function readScheduledCampaign(campaign: Automation): Promise<Reser
     return { ...reservationView(current), code: current.status === "waiting"
       ? error instanceof MusaIntegrationError ? error.code : "MUSA_UNAVAILABLE"
       : current.errorCode ?? undefined };
+  }
+}
+
+async function requireStatusScheduler(campaign: Automation, attempt: MusaScheduledReel) {
+  try { return await requireScheduler(campaign.workspaceId, campaign.instagramAccountId, attempt.connectionId); }
+  catch (error) {
+    if (!(error instanceof MusaIntegrationError) ||
+      !["MUSA_NOT_CONNECTED", "GRANT_REVOKED", "ACCOUNT_SCOPE_CHANGED", "ACCOUNT_NOT_ALLOWED"].includes(error.code)) throw error;
+    const replacement = await requireScheduler(campaign.workspaceId, campaign.instagramAccountId);
+    const original = await prisma.musaConnection.findFirst({ where: { id: attempt.connectionId,
+      workspaceId: campaign.workspaceId }, select: { businessId: true } });
+    if (!original || original.businessId !== replacement.connection.businessId || attempt.connectionId === replacement.connection.id) throw error;
+    return replacement;
   }
 }
 

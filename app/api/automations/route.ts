@@ -8,6 +8,7 @@ import { prisma } from "@/lib/db/client";
 import { isCampaignReservedForMusaPublication } from "@/lib/integrations/musa/publications-reservation";
 import { MusaIntegrationError, musaJson } from "@/lib/integrations/musa/errors";
 import { publishScheduledCampaign, readScheduledCampaign } from "@/lib/integrations/musa/scheduled-reels";
+import { setScheduledCampaignActive } from "@/lib/integrations/musa/scheduled-reel-activation";
 import { schedulerErrorResponse } from "@/lib/integrations/musa/scheduler-dashboard";
 import { calculateCtr, normalizeTopKeywords } from "@/lib/tracking/analytics";
 import { buildTrackedUrl } from "@/lib/tracking/message";
@@ -595,11 +596,8 @@ export async function PATCH(request: NextRequest) {
   if (existing.musaScheduledPublicationId) {
     if (!existing.postId || typeof parsed.data.isActive !== "boolean" || Object.keys(body).some((key) => key !== "isActive"))
       return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_SCHEDULED_CAMPAIGN", "Editá este flujo desde su configuración de Reel de MUSA."));
-    const changed = await prisma.automation.updateMany({ where: { id: automationId, workspaceId,
-      postId: existing.postId, musaScheduledPublicationId: existing.musaScheduledPublicationId },
-      data: { isActive: parsed.data.isActive } });
-    if (!changed.count) return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_REQUEST_CONFLICT", "La campaña cambió. Volvé a cargarla."));
-    return musaJson({ success: true, data: await prisma.automation.findUnique({ where: { id: automationId } }) });
+    try { return musaJson({ success: true, data: await setScheduledCampaignActive(existing, parsed.data.isActive) }); }
+    catch (error) { return schedulerErrorResponse(error); }
   }
   if (automationId.startsWith("musa_flow_scheduled_"))
     return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_SCHEDULED_CAMPAIGN", "Este subflujo pertenece a una versión congelada de MUSA."));
