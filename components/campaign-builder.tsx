@@ -23,7 +23,8 @@ import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview"
 import FlowBuilder, { type FlowBuilderHandle } from "@/components/flow-builder";
 import MessageField from "@/components/message-field";
 import { createDefaultFlow, parseFlowDefinition, validateFlowDefinition, type FlowDefinition } from "@/lib/flows/definition";
-import { campaignEntryIssues } from "@/components/flows/campaign-entry";
+import { campaignEntryIssues, type TriggerScope } from "@/components/flows/campaign-entry";
+import ScheduledReelPicker, { type ScheduledReel } from "@/components/flows/scheduled-reel-picker";
 import FlowIcon from "@/components/flows/flow-icon";
 import "@/components/flows/campaign-creation.css";
 import { getWorkspaceStorageKey, readCache, writeCache } from "@/lib/client-cache";
@@ -33,7 +34,6 @@ import {
   type ImportRow,
 } from "@/lib/import-queue";
 
-type TriggerScope = "specific" | "any" | "next";
 type MatchMode = "specific" | "any";
 type AskType = "EMAIL" | "PHONE" | "TEXT";
 
@@ -48,6 +48,7 @@ interface LoadedCampaign {
   postId: string | null;
   postUrl: string | null;
   pendingNextReel: boolean;
+  scheduledReel?: boolean;
   matchAnyPost: boolean;
   keywords: string[];
   excludedKeywords?: string[];
@@ -186,6 +187,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [isActive, setIsActive] = useState(true);
 
   const [triggerScope, setTriggerScope] = useState<TriggerScope>("specific");
+  const [scheduledReel, setScheduledReel] = useState<{ reel: ScheduledReel; requestId: string } | null>(null);
+  const [scheduledCampaign, setScheduledCampaign] = useState(false);
   const [postId, setPostId] = useState<string | null>(null);
   const [postUrl, setPostUrl] = useState<string | null>(null);
   const [postThumb, setPostThumb] = useState<string | null>(null);
@@ -325,6 +328,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         if (!payload.success) return setNotFound(true);
         const c = (payload.data as LoadedCampaign[]).find((x) => x.id === campaignId);
         if (!c) return setNotFound(true);
+        if (c.scheduledReel) return setScheduledCampaign(true);
         const fields: ContactOptions["fields"] = options?.success
           ? options.data.fields
           : [];
@@ -465,7 +469,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const username =
     accounts.find((a) => a.id === selectedAccountId)?.username ?? "yourbrand";
 
-  const entryIssues = campaignEntryIssues({ accountId: selectedAccountId, scope: triggerScope, postId, matchAnyWord: matchMode === "any", keywords, excludedKeywords, priority, publicReplyEnabled, publicReplyMessages });
+  const fromMusa = triggerScope === "scheduled";
+  const entryIssues = campaignEntryIssues({ accountId: selectedAccountId, scope: triggerScope, postId, scheduledPublicationId: scheduledReel?.reel.publicationId, matchAnyWord: matchMode === "any", keywords, excludedKeywords, priority, publicReplyEnabled, publicReplyMessages });
   const flowValidation = useMemo(() => validateFlowDefinition(flow), [flow]);
   const draftContentValid = useMemo(() => { try { parseFlowDefinition(flow); return true; } catch { return false; } }, [flow]);
   const pendingCount = entryIssues.length + flowValidation.issues.length;
@@ -552,6 +557,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       postUrl: triggerScope === "specific" ? postUrl : null,
       matchAnyPost: triggerScope === "any",
       pendingNextReel: triggerScope === "next",
+      ...(fromMusa && scheduledReel ? {
+        scheduledPublicationId: scheduledReel.reel.publicationId,
+        scheduledRequestId: scheduledReel.requestId,
+      } : {}),
       matchAnyWord: matchMode === "any",
       keywords: matchMode === "any" ? [] : keywords,
       excludedKeywords,
@@ -698,6 +707,13 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     return <div className="campaign-loading" role="status" aria-live="polite"><p>Preparando tu campaña…</p><div className="campaign-loading-lines" aria-hidden="true"><span /><span /><span /></div></div>;
   }
 
+  if (scheduledCampaign) {
+    return <div className="panel space-y-4 p-6">
+      <p>Esta automatización está asociada a un Reel de MUSA.</p>
+      <Link href={`/campaigns/${campaignId}/flow`} className="flow-button">Abrir el flujo y su programación</Link>
+    </div>;
+  }
+
   if (notFound) {
     return (
       <div className="panel rounded p-8 text-center">
@@ -746,7 +762,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           )}
         </div>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {mode === "new" && <button type="button" onClick={() => setVisualCreation(!visualCreation)} disabled={saving} className="rounded-lg px-3 py-2 text-xs text-muted hover:text-foreground" title="Usá la respuesta simple para campañas por DM">{visualCreation ? "Respuesta simple" : "Volver al flujo"}</button>}
+          {mode === "new" && <button type="button" onClick={() => {
+            if (fromMusa) setTriggerScope("specific");
+            setVisualCreation(!visualCreation);
+          }} disabled={saving} className="rounded-lg px-3 py-2 text-xs text-muted hover:text-foreground" title="Usá la respuesta simple para campañas por DM">{visualCreation ? "Respuesta simple" : "Volver al flujo"}</button>}
           {mode === "edit" && campaignId && (
             <Link href={`/campaigns/${campaignId}/flow`} className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm font-medium text-accent hover:bg-accent/20">
               Armar flujo visual
@@ -800,7 +819,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       {creatingFlow && <div className="campaign-setup-overview" aria-label="Preparación de la campaña">
         {[
           { title: "Cuenta de Instagram", value: accountsLoading ? "Cargando cuenta…" : selectedAccountId ? `@${username}` : "Conectá tu cuenta", target: "campaign-account", ready: !!selectedAccountId },
-          { title: "Publicación", value: triggerScope === "next" ? "El próximo Reel que publiques" : triggerScope === "any" ? "Cualquier publicación" : postId ? postCaption || "Reel seleccionado" : "Elegí un Reel o el próximo", target: "campaign-post", ready: triggerScope !== "specific" || !!postId },
+          { title: "Publicación", value: fromMusa ? scheduledReel?.reel.title ?? "Elegí un Reel programado en MUSA" : triggerScope === "next" ? "El próximo Reel que publiques" : triggerScope === "any" ? "Cualquier publicación" : postId ? postCaption || "Reel seleccionado" : "Elegí un Reel o el próximo", target: "campaign-post", ready: fromMusa ? !!scheduledReel : triggerScope !== "specific" || !!postId },
           { title: "Palabras que activan", value: matchMode === "any" ? "Cualquier comentario" : keywords.length ? keywords.join(", ") : "Por ejemplo: GUIA", target: "campaign-keywords", ready: !entryIssues.some((issue) => issue.target === "campaign-keywords") },
         ].map((item) => <button key={item.target} type="button" disabled={saving} onClick={() => configureEntry(item.target)} className={item.ready ? "is-ready" : ""} aria-label={`Configurar ${item.title}: ${item.value}`}>
           <span className="campaign-setup-icon"><FlowIcon name={item.ready ? "check" : "plus"} size={16} /></span><span><small>{item.title}</small><strong>{item.value}</strong></span><FlowIcon name="arrow" size={14} />
@@ -836,6 +855,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 value={selectedAccountId}
                 onChange={(id) => {
                   setSelectedAccountId(id);
+                  setScheduledReel(null);
                   setPostId(null);
                   setPostUrl(null);
                   setPostThumb(null);
@@ -864,6 +884,18 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               />
             </div>
           )}
+          {creatingFlow && <Radio checked={fromMusa} onSelect={() => setTriggerScope("scheduled")}>
+            Reel programado en MUSA
+          </Radio>}
+          {fromMusa && <div className="rounded-lg border border-border p-3">
+            <ScheduledReelPicker
+              key={selectedAccountId}
+              accountId={selectedAccountId}
+              selected={scheduledReel?.reel ?? null}
+              onSelect={reel => setScheduledReel(reel ? { reel, requestId: crypto.randomUUID() } : null)}
+              disabled={saving}
+            />
+          </div>}
           <Radio
             checked={triggerScope === "any"}
             onSelect={() => setTriggerScope("any")}
@@ -1306,7 +1338,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
 
       {/* Conversation is editable before the campaign exists. */}
       <div className="min-w-0">
-        {creatingFlow ? <FlowBuilder ref={flowEditor} key={flowEpoch} campaignId="new-campaign" creation={{ definition: flow, onChange: setFlow, campaign: { id: "new-campaign", name: name || "Nueva campaña", isActive: false, keywords, matchAnyWord: matchMode === "any", matchAnyPost: triggerScope === "any", pendingNextReel: triggerScope === "next", postId, instagramAccount: { username } }, onConfigure: () => configureEntry(), onSave: () => void handleSubmit(false), saving }} /> : <>
+        {creatingFlow ? <FlowBuilder ref={flowEditor} key={flowEpoch} campaignId="new-campaign" creation={{ definition: flow, onChange: setFlow, campaign: { id: "new-campaign", name: name || "Nueva campaña", isActive: false, keywords, matchAnyWord: matchMode === "any", matchAnyPost: triggerScope === "any", pendingNextReel: triggerScope === "next", scheduledReel: fromMusa, postId, instagramAccount: { username } }, onConfigure: () => configureEntry(), onSave: () => void handleSubmit(false), saving }} /> : <>
         <p className="mb-4 text-sm text-muted">{t("Preview")}</p>
         <div className="flex min-w-0 justify-center lg:sticky lg:top-6 lg:block">
           <CampaignPreview
@@ -1350,10 +1382,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       {creatingFlow && <footer className="campaign-launch-bar" aria-label="Guardar o activar la campaña">
         <div className="campaign-launch-status">
           <span className={pendingCount ? "has-pending" : "is-ready"}><FlowIcon name={pendingCount ? "warning" : "check"} size={17} /></span>
-          <div><strong>{pendingCount ? `${pendingCount} ${pendingCount === 1 ? "punto por completar" : "puntos por completar"}` : "Tu campaña está lista para activar"}</strong><p>{pendingCount ? entryIssues.length || !draftContentValid ? "Completá la entrada y los textos para guardar tu trabajo." : "Podés guardar un borrador y completar el recorrido después." : "Los nuevos comentarios van a iniciar esta conversación."}</p></div>
+          <div><strong>{pendingCount ? `${pendingCount} ${pendingCount === 1 ? "punto por completar" : "puntos por completar"}` : fromMusa ? "Tu flujo está listo para vincular" : "Tu campaña está lista para activar"}</strong><p>{pendingCount ? entryIssues.length || !draftContentValid ? "Completá la entrada y los textos para guardar tu trabajo." : "Podés guardar un borrador y completar el recorrido después." : fromMusa ? "El flujo queda en espera hasta que se confirme la publicación de este Reel." : "Los nuevos comentarios van a iniciar esta conversación."}</p></div>
           {pendingCount > 0 && <button type="button" disabled={saving} onClick={reviewPending}>Revisar <FlowIcon name="arrow" size={13} /></button>}
         </div>
-        <div className="campaign-launch-actions"><button type="button" onClick={() => void handleSubmit(false)} disabled={saving} className="campaign-save-draft"><FlowIcon name="save" size={15} />Guardar borrador</button><button type="button" onClick={() => void handleSubmit(true)} disabled={saving || accountsLoading} className="campaign-activate">{saving ? "Guardando…" : "Crear y activar"}<FlowIcon name="arrow" size={15} /></button></div>
+        <div className="campaign-launch-actions"><button type="button" onClick={() => void handleSubmit(false)} disabled={saving} className="campaign-save-draft"><FlowIcon name="save" size={15} />Guardar borrador</button><button type="button" onClick={() => void handleSubmit(true)} disabled={saving || accountsLoading} className="campaign-activate">{saving ? "Guardando…" : fromMusa ? "Publicar flujo" : "Crear y activar"}<FlowIcon name="arrow" size={15} /></button></div>
       </footer>}
     </div>
   );

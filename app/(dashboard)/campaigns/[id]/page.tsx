@@ -21,6 +21,7 @@ interface Campaign {
   postId: string | null;
   postUrl: string | null;
   pendingNextReel: boolean;
+  scheduledReel?: boolean;
   matchAnyPost: boolean;
   keywords: string[];
   matchAnyWord: boolean;
@@ -168,7 +169,7 @@ export default function CampaignDetailPage() {
   const hasLink = Boolean(campaign.trackedLinks?.[0]?.destinationUrl);
   const hasSecondLink = Boolean(campaign.trackedLinks?.[1]?.destinationUrl);
 
-  const trigger = campaign.matchAnyPost
+  const trigger = campaign.scheduledReel ? "Reel programado en MUSA" : campaign.matchAnyPost
     ? t("Any post or reel")
     : campaign.pendingNextReel
       ? t("Your next reel")
@@ -189,7 +190,10 @@ export default function CampaignDetailPage() {
       <Link href="/campaigns" className="inline-flex text-xs font-medium text-muted hover:text-foreground">{t("← Campaigns")}</Link>
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{campaign.name}</h1><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${campaign.isActive ? "bg-success/10 text-success" : "bg-surface-hover text-muted"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />{campaign.isActive ? t("Active") : t("Paused")}</span></div><p className="mt-2 text-sm text-muted">@{campaign.instagramAccount.username}</p></div>
-        <div className="flex flex-wrap items-center gap-2"><button type="button" onClick={toggleActive} disabled={busy} className="min-h-10 rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover disabled:opacity-50">{busy ? t("Loading…") : campaign.isActive ? t("Pause") : t("Resume")}</button><Link href={`/campaigns/${campaign.id}/edit`} className="inline-flex min-h-10 items-center rounded-xl bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">{t("Edit campaign")}</Link></div>
+        <div className="flex flex-wrap items-center gap-2">
+          {(!campaign.scheduledReel || campaign.postId) && <button type="button" onClick={toggleActive} disabled={busy} className="min-h-10 rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover disabled:opacity-50">{busy ? t("Loading…") : campaign.isActive ? t("Pause") : t("Resume")}</button>}
+          <Link href={`/campaigns/${campaign.id}/${campaign.scheduledReel ? "flow" : "edit"}`} className="inline-flex min-h-10 items-center rounded-xl bg-accent px-4 text-sm font-medium text-white hover:bg-accent-hover">{campaign.scheduledReel ? "Ver flujo y programación" : t("Edit campaign")}</Link>
+        </div>
       </div>
       {error && <div role="alert" className="rounded-xl border border-error/20 bg-error/5 p-4 text-sm text-error">{error}</div>}
       <div className="grid gap-6 xl:grid-cols-[minmax(280px,340px)_minmax(0,1fr)]">
@@ -205,7 +209,7 @@ export default function CampaignDetailPage() {
               />
             ) : (
               <div className="grid h-14 w-14 place-items-center rounded bg-surface-hover text-[10px] text-muted">
-                {campaign.matchAnyPost || campaign.pendingNextReel ? "Any" : t("Post")}
+                {campaign.scheduledReel ? "Reel de MUSA" : campaign.matchAnyPost || campaign.pendingNextReel ? "Any" : t("Post")}
               </div>
             )}
             <span className="text-sm text-foreground">{trigger}</span>
@@ -230,14 +234,14 @@ export default function CampaignDetailPage() {
           )}
         </Summary>
 
-        {campaign.flowEnabled && (
+        {(campaign.flowEnabled || campaign.scheduledReel) && (
           <Summary title="Mensajes y acciones del flujo">
             <p className="text-sm text-muted">Esta campaña usa un recorrido visual con sus propios mensajes, condiciones y acciones.</p>
             <Link href={`/campaigns/${campaign.id}/flow`} className="inline-block rounded-lg border border-accent/40 px-3 py-2 text-sm text-accent">Ver y editar el flujo</Link>
           </Summary>
         )}
 
-        {!campaign.flowEnabled && <>
+        {!campaign.flowEnabled && !campaign.scheduledReel && <>
         {campaign.openingDmEnabled && (
           <Summary title={t("They will get an opening DM")}>
             <FieldBox>{campaign.openingDmMessage || t("Opening message")}</FieldBox>
@@ -314,13 +318,13 @@ export default function CampaignDetailPage() {
           <div className="grid grid-cols-2 gap-3 sm:gap-4">{metrics.map((metric) => <StatCard key={metric.label} label={metric.label} value={metric.value} />)}</div>
           <div className="panel p-5 sm:p-6"><div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">{t("Delivery overview")}</h2><Link href="/logs" className="text-xs text-muted hover:text-foreground">{t("See activity")} →</Link></div><dl className="mt-5 grid grid-cols-3 gap-4">{[{ label: t("Sent"), value: campaign.analytics.sent }, { label: t("Skipped"), value: campaign.analytics.skipped }, { label: t("Failed"), value: campaign.analytics.failed }].map((metric) => <div key={metric.label} className="border-r border-border last:border-0"><dt className="text-xs text-muted">{metric.label}</dt><dd className="mt-2 text-lg font-semibold tabular-nums">{metric.value}</dd></div>)}</dl></div>
         </>}
-        {tab === "preview" && campaign.flowEnabled && (
+        {tab === "preview" && (campaign.flowEnabled || campaign.scheduledReel) && (
           <div className="panel space-y-3 p-6">
             <p className="text-sm text-muted">Probá los distintos caminos, respuestas y acciones desde el armador visual.</p>
             <Link href={`/campaigns/${campaign.id}/flow`} className="inline-block rounded-lg border border-accent/40 px-4 py-2 text-sm text-accent">Abrir simulador de flujo</Link>
           </div>
         )}
-        {tab === "preview" && !campaign.flowEnabled && (
+        {tab === "preview" && !campaign.flowEnabled && !campaign.scheduledReel && (
           <div className="flex justify-center sm:justify-start">
           <CampaignPreview
             tab={previewTab}
