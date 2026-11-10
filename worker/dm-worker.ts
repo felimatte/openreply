@@ -6,6 +6,7 @@ import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { replayPendingReelComments } from "@/lib/automation/pending-comments";
 import { createFlowWorker } from "@/lib/flows/queue";
 import { recoverFlowRuns } from "@/lib/flows/engine";
+import { replayMusaScheduledComments } from "@/lib/integrations/musa/scheduled-reel-comments";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -44,6 +45,7 @@ async function poll() {
       console.log("[DM Worker] Next-reel attachment:", attached);
     }
     await replayPendingReelComments();
+    await replayMusaScheduledComments();
     await reconcileComments();
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";

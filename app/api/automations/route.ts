@@ -6,6 +6,9 @@ import { z } from "zod";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 import { isCampaignReservedForMusaPublication } from "@/lib/integrations/musa/publications-reservation";
+import { MusaIntegrationError, musaJson } from "@/lib/integrations/musa/errors";
+import { publishScheduledCampaign, readScheduledCampaign } from "@/lib/integrations/musa/scheduled-reels";
+import { schedulerErrorResponse } from "@/lib/integrations/musa/scheduler-dashboard";
 import { calculateCtr, normalizeTopKeywords } from "@/lib/tracking/analytics";
 import { buildTrackedUrl } from "@/lib/tracking/message";
 import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
@@ -74,12 +77,15 @@ const createAutomationSchema = z
     secondaryButtonLabel: z.string().max(20).optional().nullable(),
     isActive: z.boolean().optional().default(true),
     flowDefinition: flowDefinitionSchema.optional(),
+    scheduledPublicationId: z.uuid().optional(),
+    scheduledRequestId: z.uuid().optional(),
     wholeWordMatch: z.boolean().optional().default(true),
     ...campaignContactFields,
   })
-  // A campaign must target a specific post, any post, or the next reel.
-  .refine(
-    (d) => d.matchAnyPost || d.pendingNextReel || Boolean(d.postId),
+  .refine((d) => d.scheduledPublicationId
+    ? Boolean(d.scheduledRequestId && d.instagramAccountId && d.instagramAccountId !== "all" && d.flowDefinition)
+      && !d.postId && !d.postUrl && !d.matchAnyPost && !d.pendingNextReel && !d.dmTriggerEnabled
+    : !d.scheduledRequestId && (d.matchAnyPost || d.pendingNextReel || Boolean(d.postId)),
     { message: "Choose which post(s) trigger the campaign", path: ["postId"] }
   )
   // And it must match either specific words or any word.
@@ -156,7 +162,7 @@ export async function GET(request: NextRequest) {
       : {};
 
   const automations = await prisma.automation.findMany({
-    where: { workspaceId, ...accountFilter },
+    where: { workspaceId, ...accountFilter, NOT: { id: { startsWith: "musa_flow_scheduled_" } } },
     include: {
       instagramAccount: {
         select: { username: true, instagramId: true },
@@ -284,6 +290,7 @@ export async function GET(request: NextRequest) {
 
       return {
         ...automation,
+        scheduledReel: Boolean(automation.musaScheduledPublicationId),
         trackedLinks: automation.trackedLinks.map((link) => ({
           ...link,
           trackedUrl: buildTrackedUrl(link.slug),
@@ -333,6 +340,31 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
+
+  const { scheduledPublicationId, scheduledRequestId } = parsed.data;
+  if (scheduledPublicationId && request.headers.get("origin") !== new URL(request.url).origin) {
+    return schedulerErrorResponse(new MusaIntegrationError(403, "INVALID_ORIGIN", "Volvé a abrir OpenReply y reintentá."));
+  }
+  const finishScheduled = async <T extends Parameters<typeof publishScheduledCampaign>[0]>(automation: T) => {
+    if (automation.instagramAccountId !== parsed.data.instagramAccountId || automation.musaScheduledPublicationId !== scheduledPublicationId)
+      return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_REQUEST_CONFLICT", "La solicitud corresponde a otro Reel."));
+    try {
+      const scheduledReel = parsed.data.isActive
+        ? await publishScheduledCampaign(automation, { publicationId: scheduledPublicationId!, requestId: scheduledRequestId })
+        : await readScheduledCampaign(automation);
+      return musaJson({ success: true, data: automation, scheduledReel }, 201);
+    } catch (error) {
+      const code = error instanceof MusaIntegrationError ? error.code : "MUSA_UNAVAILABLE";
+      return musaJson({ success: true, data: automation, scheduledReel: {
+        status: "failed", publicationId: scheduledPublicationId, code,
+      } }, 201);
+    }
+  };
+  const findScheduledCreation = () => scheduledRequestId
+    ? prisma.automation.findUnique({ where: { workspaceId_musaScheduledRequestId: { workspaceId, musaScheduledRequestId: scheduledRequestId } },
+      include: { trackedLinks: true } }) : Promise.resolve(null);
+  const alreadySaved = await findScheduledCreation();
+  if (alreadySaved) return finishScheduled(alreadySaved);
 
   const requestedInstagramAccountId =
     parsed.data.instagramAccountId && parsed.data.instagramAccountId !== "all"
@@ -416,7 +448,7 @@ export async function POST(request: NextRequest) {
     .map((m) => m.trim())
     .filter(Boolean);
 
-  const versionId = graph && parsed.data.isActive ? randomUUID() : null;
+  const versionId = graph && parsed.data.isActive && !scheduledPublicationId ? randomUUID() : null;
   const createArgs = {
     data: {
       name: parsed.data.name,
@@ -462,7 +494,8 @@ export async function POST(request: NextRequest) {
       publicReplyMessage: parsed.data.publicReplyEnabled
         ? publicReplyList[0] ?? parsed.data.publicReplyMessage ?? null
         : null,
-      isActive: parsed.data.isActive,
+      isActive: parsed.data.isActive && !scheduledPublicationId,
+      ...(scheduledPublicationId ? { musaScheduledPublicationId: scheduledPublicationId, musaScheduledRequestId: scheduledRequestId } : {}),
       wholeWordMatch: parsed.data.wholeWordMatch,
       ...contactSettings.data,
       workspaceId,
@@ -486,19 +519,26 @@ export async function POST(request: NextRequest) {
 
   // The campaign must never become active between its creation and saving the
   // conversation. A failed version or field write rolls the whole save back.
-  const automation = graph ? await prisma.$transaction(async (tx) => {
+  const createAutomation = () => graph ? prisma.$transaction(async (tx) => {
     const created = await tx.automation.create(createArgs);
     if (versionId) for (const node of graph.nodes) {
       const key = node.type === "input" ? node.data.fieldKey : node.type === "action" ? node.data.fieldKey : undefined;
       if (key && !["email", "phone"].includes(key)) await tx.contactField.upsert({ where: { workspaceId_key: { workspaceId, key } }, create: { workspaceId, key, label: key }, update: {} });
     }
     return created;
-  }) : await prisma.automation.create(createArgs);
+  }) : prisma.automation.create(createArgs);
 
-  return NextResponse.json(
-    { success: true, data: automation },
-    { status: 201 }
-  );
+  try {
+    const automation = await createAutomation();
+    if (scheduledPublicationId) return finishScheduled(automation);
+    return NextResponse.json({ success: true, data: automation }, { status: 201 });
+  } catch (error) {
+    if (scheduledRequestId && error && typeof error === "object" && "code" in error && error.code === "P2002") {
+      const winner = await findScheduledCreation();
+      if (winner) return finishScheduled(winner);
+    }
+    throw error;
+  }
 }
 
 export async function PATCH(request: NextRequest) {
@@ -551,6 +591,18 @@ export async function PATCH(request: NextRequest) {
       { status: 404 }
     );
   }
+
+  if (existing.musaScheduledPublicationId) {
+    if (!existing.postId || typeof parsed.data.isActive !== "boolean" || Object.keys(body).some((key) => key !== "isActive"))
+      return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_SCHEDULED_CAMPAIGN", "Editá este flujo desde su configuración de Reel de MUSA."));
+    const changed = await prisma.automation.updateMany({ where: { id: automationId, workspaceId,
+      postId: existing.postId, musaScheduledPublicationId: existing.musaScheduledPublicationId },
+      data: { isActive: parsed.data.isActive } });
+    if (!changed.count) return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_REQUEST_CONFLICT", "La campaña cambió. Volvé a cargarla."));
+    return musaJson({ success: true, data: await prisma.automation.findUnique({ where: { id: automationId } }) });
+  }
+  if (automationId.startsWith("musa_flow_scheduled_"))
+    return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_SCHEDULED_CAMPAIGN", "Este subflujo pertenece a una versión congelada de MUSA."));
 
   const {
     trackedDestinationUrl,
@@ -689,7 +741,20 @@ export async function DELETE(request: NextRequest) {
   if (await isCampaignReservedForMusaPublication(automationId, workspaceId)) {
     return NextResponse.json({ success: false, error: "Esta campaña está reservada por una publicación de MUSA. Esperá su confirmación." }, { status: 409 });
   }
-  await prisma.automation.delete({ where: { id: automationId } });
+  if (automationId.startsWith("musa_flow_scheduled_"))
+    return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_SCHEDULED_CAMPAIGN", "Este subflujo pertenece a una versión congelada de MUSA."));
+  if (existing.musaScheduledPublicationId) {
+    const deleted = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT "id" FROM "Automation" WHERE "id" = ${automationId} FOR UPDATE`;
+      const pending = await tx.musaScheduledReel.findFirst({ where: { automationId, status: { in: ["reserving", "waiting"] } },
+        select: { requestId: true } });
+      if (pending) return false;
+      await tx.automation.deleteMany({ where: { id: automationId, workspaceId } });
+      return true;
+    });
+    if (!deleted)
+      return schedulerErrorResponse(new MusaIntegrationError(409, "MUSA_REEL_ALREADY_RESERVED", "El flujo tiene una reserva pendiente en MUSA."));
+  } else await prisma.automation.delete({ where: { id: automationId } });
 
   return NextResponse.json({ success: true, data: { deleted: true } });
 }
