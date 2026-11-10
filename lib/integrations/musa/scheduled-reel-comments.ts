@@ -7,6 +7,7 @@ import { getDMQueue } from "@/lib/queue/client";
 type WebhookRecord = { id: string; payload: Prisma.JsonValue; createdAt: Date };
 const PAGE_SIZE = 25;
 const MAX_PAGES = 4;
+const timestamp = (date: Date | null) => date?.toISOString().slice(0, -1) ?? null;
 
 export function scheduledCommentEvents(payload: Prisma.JsonValue, instagramId: string, mediaId: string, now = Date.now()) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Array.isArray(payload.entry)) return [];
@@ -21,9 +22,9 @@ async function earlyWebhooks(attempt: MusaScheduledReel, instagramId: string, me
   return prisma.$queryRaw<WebhookRecord[]>`
     SELECT w."id", w."payload", w."createdAt"
     FROM "WebhookEvent" w
-    WHERE w."object" = 'instagram' AND w."createdAt" >= ${oldest} AND w."createdAt" <= ${cutoff}
-      AND (${attempt.replayCursorAt}::timestamp IS NULL OR
-        (w."createdAt", w."id") > (${attempt.replayCursorAt}::timestamp, ${attempt.replayCursorId}::text))
+    WHERE w."object" = 'instagram' AND w."createdAt" >= ${timestamp(oldest)}::timestamp AND w."createdAt" <= ${timestamp(cutoff)}::timestamp
+      AND (${timestamp(attempt.replayCursorAt)}::timestamp IS NULL OR
+        (w."createdAt", w."id") > (${timestamp(attempt.replayCursorAt)}::timestamp, ${attempt.replayCursorId}::text))
       AND EXISTS (
         SELECT 1 FROM jsonb_array_elements(CASE WHEN jsonb_typeof(w."payload"->'entry') = 'array'
           THEN w."payload"->'entry' ELSE '[]'::jsonb END) entry
@@ -65,17 +66,19 @@ export async function replayMusaScheduledComments(now = new Date()) {
     where: { status: "active", replayDueAt: { lte: now } }, orderBy: { replayDueAt: "asc" }, take: 10,
   });
   for (const attempt of attempts) {
-    const lease = new Date(Math.max(now.getTime(), Date.now()) + 60_000);
     const scope = { requestId: attempt.requestId, status: "active" };
-    // The first claim observes the committed activation. Its DB-clock cutoff also covers
-    // events that were stored after activatedAt but processed before the commit.
-    const [claim] = await prisma.$queryRaw<{ replayUntil: Date }[]>`
-      UPDATE "MusaScheduledReel" SET "replayDueAt" = ${lease},
-        "replayUntil" = coalesce("replayUntil", clock_timestamp()), "updatedAt" = clock_timestamp()
+    // Use the same UTC convention as Prisma's timestamp columns. The first claim
+    // observes the committed activation, including any webhooks processed before it.
+    const [claim] = await prisma.$queryRaw<{ replayUntil: Date; replayDueAt: Date }[]>`
+      UPDATE "MusaScheduledReel"
+      SET "replayDueAt" = (timezone('UTC', clock_timestamp()) + interval '60 seconds')::timestamp(3),
+        "replayUntil" = coalesce("replayUntil", timezone('UTC', clock_timestamp())::timestamp(3)),
+        "updatedAt" = timezone('UTC', clock_timestamp())::timestamp(3)
       WHERE "requestId" = ${scope.requestId}::uuid AND "status" = 'active'
-        AND "replayDueAt" = ${attempt.replayDueAt}
-      RETURNING "replayUntil"`;
+        AND "replayDueAt" <= timezone('UTC', clock_timestamp())
+      RETURNING "replayUntil", "replayDueAt"`;
     if (!claim) continue;
+    const lease = claim.replayDueAt;
     let cursor = attempt;
     try {
       for (let page = 0; page < MAX_PAGES; page++) {
