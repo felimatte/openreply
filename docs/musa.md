@@ -30,6 +30,14 @@ Publication of Reels, images and mixed carousels is handled by `PUT /publication
 
 Accounts additionally advertise `canPublishTrialReels`, `trialUnavailableReason` and `canAttachFlowOnPublish`. Trial support requires verified publishing authorization and a supported provider transport. This does not preapprove an Instagram account's trial eligibility: provider rejection remains a visible failure and never falls back to a normal Reel. Flow attachment uses the same existing business/workspace/account grant; it does not start or enable the messaging worker.
 
+## Scheduled Reels selected in OpenReply
+
+Set `MUSA_SCHEDULER_BASE_URL` to the trusted MUSA origin. With the existing forward bearer and matching business header, `PUT /scheduled-reels/grant` registers the separately issued reverse credential for one OpenReply account and Instagram ID. OpenReply verifies it against the MUSA origin, stores it encrypted, and ties it to the forward connection. Revoking that connection closes waiting reservations and removes the reverse credential.
+
+An owner or administrator can select an already queued Reel for the granted account from New Campaign. Saving a draft does not reserve or activate a campaign. Publishing freezes the selected graph and subflows, then calls MUSA with an idempotent reservation request. If the publication was cancelled, select another scheduled Reel from the same account and keep the draft.
+
+With the same forward bearer, `PUT /scheduled-reels/:reservationId/activate` accepts the exact publication, account, automation, version, and confirmed Instagram media ID. OpenReply binds the existing campaign and schedules a durable replay of early comments. An identical activation can be repeated without turning a manually paused campaign on again. Worker delivery still requires a healthy worker and valid Instagram permissions.
+
 ## Opening the selected workspace
 
 Navigate to `/integrations/musa/open?workspaceId=...&accountId=...`. OpenReply requires the person's own session and validates both membership and account ownership. A person without access returns to the login screen with the original destination preserved. This route does not create users, impersonate an administrator or issue an authentication session.

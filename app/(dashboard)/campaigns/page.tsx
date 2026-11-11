@@ -21,6 +21,7 @@ interface Campaign {
   postId: string | null;
   postUrl: string | null;
   pendingNextReel: boolean;
+  scheduledReel?: boolean;
   matchAnyPost: boolean;
   keywords: string[];
   matchAnyWord: boolean;
@@ -263,11 +264,15 @@ export default function CampaignsPage() {
                   <CampaignMedia thumbnail={thumbnail} videoUrl={videoUrl} postUrl={campaign.postUrl} campaignId={campaign.id} onPlay={() => videoUrl && setPlayingVideo({ url: videoUrl, postUrl: campaign.postUrl })} />
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><Link href={`/campaigns/${campaign.id}`} className="max-w-full break-words text-base font-semibold tracking-tight hover:underline">{campaign.name}</Link><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium ${campaign.isActive ? "bg-success/8 text-success" : "bg-surface-hover text-muted"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{campaign.isActive ? t("Active") : t("Paused")}</span></div>
-                    <p className="mt-1.5 text-xs text-muted">@{campaign.instagramAccount.username}<span className="mx-2">·</span>{campaign.matchAnyPost ? t("Any post or reel") : campaign.pendingNextReel ? t("Waiting for next reel") : t("A specific post or reel")}</p>
+                    <p className="mt-1.5 text-xs text-muted">@{campaign.instagramAccount.username}<span className="mx-2">·</span>{campaign.scheduledReel ? "Reel de MUSA" : campaign.matchAnyPost ? t("Any post or reel") : campaign.pendingNextReel ? t("Waiting for next reel") : t("A specific post or reel")}</p>
                     <p className="mt-3 truncate text-sm text-muted">{campaign.dmMessage}</p>
                   </div>
                   <div className="relative flex shrink-0 items-center gap-2">
-                    <button type="button" role="switch" aria-checked={campaign.isActive} aria-label={`${campaign.isActive ? t("Pause") : t("Resume")}: ${campaign.name}`} disabled={busyId !== null || loading} onClick={() => void toggleActive(campaign)} className="grid h-11 w-11 place-items-center rounded-lg disabled:opacity-40"><span aria-hidden="true" className={`relative h-6 w-10 rounded-full transition-colors ${campaign.isActive ? "bg-success" : "bg-zinc-300"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${campaign.isActive ? "left-5" : "left-1"}`} /></span></button>
+                    {campaign.scheduledReel && !campaign.postId ? (
+                      <Link href={`/campaigns/${campaign.id}/flow`} className="rounded-lg px-2 py-3 text-sm text-accent">Ver vínculo</Link>
+                    ) : (
+                      <button type="button" role="switch" aria-checked={campaign.isActive} aria-label={`${campaign.isActive ? t("Pause") : t("Resume")}: ${campaign.name}`} disabled={busyId !== null || loading} onClick={() => void toggleActive(campaign)} className="grid h-11 w-11 place-items-center rounded-lg disabled:opacity-40"><span aria-hidden="true" className={`relative h-6 w-10 rounded-full transition-colors ${campaign.isActive ? "bg-success" : "bg-zinc-300"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${campaign.isActive ? "left-5" : "left-1"}`} /></span></button>
+                    )}
                     <button type="button" aria-label={`${t("More actions")}: ${campaign.name}`} aria-expanded={menuOpenId === campaign.id} disabled={busyId !== null || loading} onClick={() => setMenuOpenId((current) => current === campaign.id ? null : campaign.id)} className="grid h-11 w-11 place-items-center rounded-lg text-xl text-muted hover:bg-surface-hover hover:text-foreground disabled:opacity-40">⋯</button>
                     {menuOpenId === campaign.id && <><div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} /><div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-border bg-surface p-1 shadow-lg"><Link href={`/campaigns/${campaign.id}/edit`} className="block rounded-lg px-3 py-2.5 text-sm hover:bg-surface-hover">{t("Edit")}</Link>{campaign.postUrl && <button type="button" onClick={() => void copyReelUrl(campaign)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Copy URL")}</button>}<button type="button" onClick={() => void duplicateAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Duplicate")}</button><div className="my-1 border-t border-border" /><button type="button" onClick={() => void deleteAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-error hover:bg-error/5">{t("Delete")}</button></div></>}
                   </div>

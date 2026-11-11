@@ -108,7 +108,7 @@ export async function metaPublishingQuota(context: InstagramContext, instagramId
 
 export async function publishMetaContainer(context: InstagramContext, instagramId: string, containerId: string) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media_publish`, {
-    method: "POST", body: { creation_id: containerId },
+    method: "POST", body: { creation_id: containerId }, timeoutMs: 7000,
   });
   const parsed = remoteId.safeParse(raw);
   if (!parsed.success) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", true);

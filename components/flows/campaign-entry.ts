@@ -1,7 +1,10 @@
+export type TriggerScope = "specific" | "any" | "next" | "scheduled";
+
 export interface CampaignEntrySettings {
   accountId: string;
-  scope: "specific" | "any" | "next";
+  scope: TriggerScope;
   postId: string | null;
+  scheduledPublicationId?: string;
   matchAnyWord: boolean;
   keywords: string[];
   excludedKeywords: string[];
@@ -14,6 +17,7 @@ export function campaignEntryIssues(settings: CampaignEntrySettings) {
   const issues: { target: string; message: string }[] = [];
   if (!settings.accountId) issues.push({ target: "campaign-account", message: "Conectá una cuenta de Instagram." });
   if (settings.scope === "specific" && !settings.postId) issues.push({ target: "campaign-post", message: "Elegí un Reel o prepará el próximo." });
+  if (settings.scope === "scheduled" && !settings.scheduledPublicationId) issues.push({ target: "campaign-post", message: "Elegí un Reel programado en MUSA." });
   if (!settings.matchAnyWord) {
     if (!settings.keywords.length) issues.push({ target: "campaign-keywords", message: "Agregá la palabra que activa la respuesta." });
     else if (settings.keywords.length > 10 || settings.keywords.some((word) => word.length > 50)) issues.push({ target: "campaign-keywords", message: "Usá hasta 10 palabras, de hasta 50 caracteres cada una." });

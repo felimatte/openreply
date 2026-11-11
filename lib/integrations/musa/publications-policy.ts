@@ -82,5 +82,5 @@ export function publicationPayloadHash(payload: MusaPublicationInput): string {
 export function isMusaCampaignAttachable(campaign: {
   id?: string; isActive: boolean; postId: string | null; matchAnyPost: boolean; dmTriggerEnabled: boolean;
 }, allowPrivate = false): boolean {
-  return (allowPrivate || !campaign.id?.startsWith("musa_flow_")) && !campaign.isActive && !campaign.postId && !campaign.matchAnyPost && !campaign.dmTriggerEnabled;
+  return !("musaScheduledPublicationId" in campaign && campaign.musaScheduledPublicationId) && (allowPrivate || !campaign.id?.startsWith("musa_flow_")) && !campaign.isActive && !campaign.postId && !campaign.matchAnyPost && !campaign.dmTriggerEnabled;
 }

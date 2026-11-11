@@ -9,6 +9,12 @@ describe("campaign entry readiness", () => {
     expect(campaignEntryIssues({ ...ready, scope: "any", matchAnyWord: true, keywords: [] })).toEqual([]);
   });
 
+  it("requires the exact scheduled publication instead of an Instagram media ID", () => {
+    const scheduled = { ...ready, scope: "scheduled" as const, postId: "published-media" };
+    expect(campaignEntryIssues(scheduled).map(issue => issue.target)).toEqual(["campaign-post"]);
+    expect(campaignEntryIssues({ ...scheduled, postId: null, scheduledPublicationId: "musa-reel" })).toEqual([]);
+  });
+
   it("takes missing entry settings to their corresponding controls", () => {
     expect(campaignEntryIssues({ ...ready, accountId: "", scope: "specific", keywords: [] }).map((issue) => issue.target)).toEqual(["campaign-account", "campaign-post", "campaign-keywords"]);
   });

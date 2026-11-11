@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/client";
 import { generateReportShareSlug } from "@/lib/reports/share";
 import { MusaIntegrationError } from "./errors";
 import { requireMusaAccount, type MusaConnectionContext } from "./auth";
+import type { Scheduler } from "./scheduler";
 import { MAX_MUSA_FLOW_BUNDLE, MAX_MUSA_FLOW_DEPTH, resolveMusaFlowBundle, sourceGraph, subflowIds, type MusaFlowSource } from "./flow-bundle";
 
 const SETTINGS = ["keywords", "excludedKeywords", "priority", "matchAnyWord", "dmMessage", "openingDmEnabled",
@@ -24,7 +25,7 @@ export function musaFlowRevision(root: MusaFlowSource, bundle: readonly MusaFlow
 export async function listMusaFlows(context: MusaConnectionContext, accountId: string) {
   const account = requireMusaAccount(context, accountId);
   const campaigns = await prisma.automation.findMany({ where: { workspaceId: context.workspaceId,
-    instagramAccountId: account.id, flowPublishedVersionId: { not: null }, id: { not: { startsWith: "musa_flow_" } } },
+    instagramAccountId: account.id, musaScheduledPublicationId: null, flowPublishedVersionId: { not: null }, id: { not: { startsWith: "musa_flow_" } } },
   select: { flowPublishedVersionId: true }, orderBy: [{ createdAt: "desc" }, { id: "asc" }], take: 501 });
   if (campaigns.length > 500) throw new MusaIntegrationError(503, "FLOW_LIST_LIMIT", "The flow list is too large");
   const versions = await prisma.flowVersion.findMany({ where: { workspaceId: context.workspaceId,
@@ -41,7 +42,7 @@ export async function listMusaFlows(context: MusaConnectionContext, accountId: s
   }) };
 }
 
-async function loadPublicationFlowBundle(tx: Prisma.TransactionClient, context: MusaConnectionContext, accountId: string, flowId: string) {
+async function loadPublicationFlowBundle(tx: Prisma.TransactionClient, context: Pick<MusaConnectionContext, "workspaceId">, accountId: string, flowId: string) {
   const ownership = { workspaceId: context.workspaceId, instagramAccountId: accountId };
   const root = await tx.flowVersion.findFirst({ where: { id: flowId, workspaceId: context.workspaceId,
     automation: ownership }, include: { automation: true } });
@@ -73,9 +74,25 @@ export async function copyMusaPublicationFlow(tx: Prisma.TransactionClient, cont
   accountId: string, flowId: string, revision: string) {
   requireMusaAccount(context, accountId);
   const bundle = await loadPublicationFlowBundle(tx, context, accountId, flowId);
+  if (bundle.root.automation.musaScheduledPublicationId)
+    throw new MusaIntegrationError(409, "FLOW_CHANGED", "Choose a reusable flow instead of a scheduled Reel");
   if (musaFlowRevision(bundle.root, bundle.sources) !== revision)
     throw new MusaIntegrationError(409, "FLOW_CHANGED", "Choose the current published flow chain again");
-  const ids = new Map(bundle.sources.map(source => [source.automation.id, { campaign: `musa_flow_${randomUUID()}`, version: randomUUID() }]));
+  return persistMusaFlowBundle(tx, context.workspaceId, accountId, bundle);
+}
+
+/** Freeze a newly created root version on its original campaign, with private subflows. */
+export async function freezeScheduledMusaFlow(tx: Prisma.TransactionClient, scheduler: Scheduler, versionId: string) {
+  const workspaceId = scheduler.connection.workspaceId;
+  const bundle = await loadPublicationFlowBundle(tx, { workspaceId }, scheduler.account.id, versionId);
+  return persistMusaFlowBundle(tx, workspaceId, scheduler.account.id, bundle, true);
+}
+
+async function persistMusaFlowBundle(tx: Prisma.TransactionClient, workspaceId: string, accountId: string,
+  bundle: { root: MusaFlowSource; sources: MusaFlowSource[] }, keepSourceRoot = false) {
+  const ids = new Map(bundle.sources.map(source => [source.automation.id,
+    keepSourceRoot && source.id === bundle.root.id ? { campaign: source.automation.id, version: source.id }
+      : { campaign: `musa_flow_${keepSourceRoot ? "scheduled_" : ""}${randomUUID()}`, version: randomUUID() }]));
   const now = new Date();
   const campaigns = bundle.sources.map(source => {
     const target = ids.get(source.automation.id)!;
@@ -83,15 +100,20 @@ export async function copyMusaPublicationFlow(tx: Prisma.TransactionClient, cont
     const remapped = { ...graph, nodes: graph.nodes.map(node => node.type === "action" && node.data.action === "start_flow"
       ? { ...node, data: { ...node.data, automationId: ids.get(node.data.automationId!)!.campaign } } : node) };
     return { ...settings(source.automation), id: target.campaign, name: source.automation.name,
-      workspaceId: context.workspaceId, instagramAccountId: accountId, createdAt: now, updatedAt: now,
+      workspaceId, instagramAccountId: accountId, createdAt: now, updatedAt: now,
       isActive: false, postId: null, postUrl: null, pendingNextReel: false, nextReelArmedAt: null,
       matchAnyPost: false, dmTriggerEnabled: false, reportShareSlug: generateReportShareSlug(), reportShareEnabled: false,
       flowDraft: remapped as unknown as Prisma.InputJsonValue, flowDraftRevision: 1, flowEnabled: false, flowPublishedVersionId: target.version,
     } satisfies Prisma.AutomationCreateManyInput;
   });
-  await tx.automation.createMany({ data: campaigns });
-  await tx.flowVersion.createMany({ data: campaigns.map(campaign => ({ id: campaign.flowPublishedVersionId,
-    workspaceId: context.workspaceId, automationId: campaign.id, version: 1, definition: campaign.flowDraft })) });
   const rootId = ids.get(bundle.root.automation.id)!.campaign;
-  return { ...campaigns.find(campaign => campaign.id === rootId)!, flowCampaignIds: campaigns.map(campaign => campaign.id) };
+  const root = campaigns.find(campaign => campaign.id === rootId)!;
+  const copies = keepSourceRoot ? campaigns.filter(campaign => campaign.id !== rootId) : campaigns;
+  if (copies.length) {
+    await tx.automation.createMany({ data: copies });
+    await tx.flowVersion.createMany({ data: copies.map(campaign => ({ id: campaign.flowPublishedVersionId,
+      workspaceId, automationId: campaign.id, version: 1, definition: campaign.flowDraft })) });
+  }
+  if (keepSourceRoot) await tx.flowVersion.update({ where: { id: root.flowPublishedVersionId }, data: { definition: root.flowDraft } });
+  return { ...root, flowCampaignIds: campaigns.map(campaign => campaign.id) };
 }
