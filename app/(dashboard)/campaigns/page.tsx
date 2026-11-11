@@ -8,13 +8,13 @@
 
 import { useI18n } from "@/lib/i18n/provider";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import AppIcon from "@/components/app-icon";
 
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import { readCache, writeCache } from "@/lib/client-cache";
 import { accountScopedHref } from "@/components/workspace-navigation";
+import { useAccountFilter } from "@/components/use-account-filter";
 
 interface Campaign {
   id: string;
@@ -73,7 +73,7 @@ export default function CampaignsPage() {
 
 function CampaignsContent() {
   const { t, label, locale } = useI18n();
-  const selectedAccountId = useSearchParams().get("instagramAccountId") ?? "all";
+  const [selectedAccountId, setSelectedAccountId] = useAccountFilter();
   const [automations, setAutomations] = useState<Campaign[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -235,7 +235,7 @@ function CampaignsContent() {
       <header className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("Campaigns")}</h1><p className="mt-2 text-sm text-muted">{t("Manage your campaigns and see what is working.")}</p></div>
         <div className="flex items-center gap-2">
-          <Link href="/campaigns/import" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover sm:flex-none">{t("Import")}</Link>
+          <Link href={accountScopedHref("/campaigns/import", selectedAccountId)} className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover sm:flex-none">{t("Import")}</Link>
           <Link href={newCampaignHref} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hover sm:flex-none"><AppIcon name="plus" className="h-4 w-4" />{t("New Campaign")}</Link>
         </div>
       </header>
@@ -256,7 +256,7 @@ function CampaignsContent() {
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
             {accounts.length > 1 && <AccountSelect accounts={accounts} value={selectedAccountId} onChange={(accountId) => {
               setLoading(true);
-              window.history.replaceState(null, "", accountScopedHref("/campaigns", accountId));
+              setSelectedAccountId(accountId);
             }} />}
             <div className="relative w-full sm:w-72"><svg aria-hidden="true" className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} aria-label={t("Search campaigns by name, keyword, or message…")} placeholder={t("Search campaigns by name, keyword, or message…")} className="min-h-10 w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm placeholder:text-muted" /></div>
           </div>
@@ -271,25 +271,25 @@ function CampaignsContent() {
               const busy = busyId === campaign.id;
               return <article key={campaign.id} className="panel relative p-5 transition-colors hover:border-border-hover sm:p-6">
                 <div className="flex items-start gap-4">
-                  <CampaignMedia thumbnail={thumbnail} videoUrl={videoUrl} postUrl={campaign.postUrl} campaignId={campaign.id} onPlay={() => videoUrl && setPlayingVideo({ url: videoUrl, postUrl: campaign.postUrl })} />
+                  <CampaignMedia thumbnail={thumbnail} videoUrl={videoUrl} postUrl={campaign.postUrl} campaignHref={accountScopedHref(`/campaigns/${campaign.id}`, selectedAccountId)} onPlay={() => videoUrl && setPlayingVideo({ url: videoUrl, postUrl: campaign.postUrl })} />
                   <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><Link href={`/campaigns/${campaign.id}`} className="max-w-full break-words text-base font-semibold tracking-tight hover:underline">{campaign.name}</Link><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium ${campaign.isActive ? "bg-success/8 text-success" : "bg-surface-hover text-muted"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{campaign.isActive ? t("Active") : t("Paused")}</span></div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2"><Link href={accountScopedHref(`/campaigns/${campaign.id}`, selectedAccountId)} className="max-w-full break-words text-base font-semibold tracking-tight hover:underline">{campaign.name}</Link><span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[10px] font-medium ${campaign.isActive ? "bg-success/8 text-success" : "bg-surface-hover text-muted"}`}><span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden="true" />{campaign.isActive ? t("Active") : t("Paused")}</span></div>
                     <p className="mt-1.5 text-xs text-muted">@{campaign.instagramAccount.username}<span className="mx-2">·</span>{campaign.scheduledReel ? "Reel de MUSA" : campaign.matchAnyPost ? t("Any post or reel") : campaign.pendingNextReel ? t("Waiting for next reel") : t("A specific post or reel")}</p>
                     <p className="mt-3 truncate text-sm text-muted">{campaign.dmMessage}</p>
                   </div>
                   <div className="relative flex shrink-0 items-center gap-2">
                     {campaign.scheduledReel && !campaign.postId ? (
-                      <Link href={`/campaigns/${campaign.id}/flow`} className="rounded-lg px-2 py-3 text-sm text-accent">Ver vínculo</Link>
+                      <Link href={accountScopedHref(`/campaigns/${campaign.id}/flow`, selectedAccountId)} className="rounded-lg px-2 py-3 text-sm text-accent">Ver vínculo</Link>
                     ) : (
                       <button type="button" role="switch" aria-checked={campaign.isActive} aria-label={`${campaign.isActive ? t("Pause") : t("Resume")}: ${campaign.name}`} disabled={busyId !== null || loading} onClick={() => void toggleActive(campaign)} className="grid h-11 w-11 place-items-center rounded-lg disabled:opacity-40"><span aria-hidden="true" className={`relative h-6 w-10 rounded-full transition-colors ${campaign.isActive ? "bg-success" : "bg-zinc-300"}`}><span className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${campaign.isActive ? "left-5" : "left-1"}`} /></span></button>
                     )}
                     <button type="button" aria-label={`${t("More actions")}: ${campaign.name}`} aria-expanded={menuOpenId === campaign.id} disabled={busyId !== null || loading} onClick={() => setMenuOpenId((current) => current === campaign.id ? null : campaign.id)} className="grid h-11 w-11 place-items-center rounded-lg text-xl text-muted hover:bg-surface-hover hover:text-foreground disabled:opacity-40">⋯</button>
-                    {menuOpenId === campaign.id && <><div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} /><div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-border bg-surface p-1 shadow-lg"><Link href={`/campaigns/${campaign.id}/edit`} className="block rounded-lg px-3 py-2.5 text-sm hover:bg-surface-hover">{t("Edit")}</Link>{campaign.postUrl && <button type="button" onClick={() => void copyReelUrl(campaign)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Copy URL")}</button>}<button type="button" onClick={() => void duplicateAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Duplicate")}</button><div className="my-1 border-t border-border" /><button type="button" onClick={() => void deleteAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-error hover:bg-error/5">{t("Delete")}</button></div></>}
+                    {menuOpenId === campaign.id && <><div className="fixed inset-0 z-10" onClick={() => setMenuOpenId(null)} /><div className="absolute right-0 top-10 z-20 w-44 rounded-xl border border-border bg-surface p-1 shadow-lg"><Link href={accountScopedHref(`/campaigns/${campaign.id}/edit`, selectedAccountId)} className="block rounded-lg px-3 py-2.5 text-sm hover:bg-surface-hover">{t("Edit")}</Link>{campaign.postUrl && <button type="button" onClick={() => void copyReelUrl(campaign)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Copy URL")}</button>}<button type="button" onClick={() => void duplicateAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm hover:bg-surface-hover">{t("Duplicate")}</button><div className="my-1 border-t border-border" /><button type="button" onClick={() => void deleteAutomation(campaign.id)} className="block w-full rounded-lg px-3 py-2.5 text-left text-sm text-error hover:bg-error/5">{t("Delete")}</button></div></>}
                   </div>
                 </div>
                 <div className="mt-5 flex flex-col justify-between gap-4 border-t border-border pt-4 lg:flex-row lg:items-center">
                   <div className="flex min-w-0 flex-wrap gap-1.5">{campaign.matchAnyWord ? <span className="rounded-md bg-surface-hover px-2 py-1 text-[11px] text-muted">{t("Any comment")}</span> : campaign.keywords.slice(0, 5).map((keyword) => <span key={keyword} className="max-w-40 truncate rounded-md border border-border bg-background px-2 py-1 text-[11px] font-medium text-muted">{keyword}</span>)}{campaign.keywords.length > 5 && <span className="px-1 py-1 text-[11px] text-muted">+{campaign.keywords.length - 5}</span>}{campaign.requireFollow && <span className="rounded-md bg-surface-hover px-2 py-1 text-[11px] text-muted">{t("Follow gate")}</span>}</div>
-                  <dl className="flex shrink-0 items-center gap-5 text-xs sm:gap-7">{[{ name: t("sent"), value: campaign.analytics.sent.toLocaleString(locale) }, { name: t("clicks"), value: campaign.analytics.clicks.toLocaleString(locale) }, { name: t("CTR"), value: `${campaign.analytics.ctr}%` }].map((metric) => <div key={metric.name} className="flex items-baseline gap-1.5"><dd className="font-semibold tabular-nums text-foreground">{metric.value}</dd><dt className="text-muted">{metric.name}</dt></div>)}<Link href={`/campaigns/${campaign.id}`} aria-label={`${t("Insights")}: ${campaign.name}`} className="ml-auto text-lg text-muted hover:text-foreground">→</Link></dl>
+                  <dl className="flex shrink-0 items-center gap-5 text-xs sm:gap-7">{[{ name: t("sent"), value: campaign.analytics.sent.toLocaleString(locale) }, { name: t("clicks"), value: campaign.analytics.clicks.toLocaleString(locale) }, { name: t("CTR"), value: `${campaign.analytics.ctr}%` }].map((metric) => <div key={metric.name} className="flex items-baseline gap-1.5"><dd className="font-semibold tabular-nums text-foreground">{metric.value}</dd><dt className="text-muted">{metric.name}</dt></div>)}<Link href={accountScopedHref(`/campaigns/${campaign.id}`, selectedAccountId)} aria-label={`${t("Insights")}: ${campaign.name}`} className="ml-auto text-lg text-muted hover:text-foreground">→</Link></dl>
                 </div>
                 {(busy || copiedId === campaign.id) && <p role="status" className="mt-3 text-xs text-muted">{busy ? t("Loading…") : t("Copied!")}</p>}
               </article>;
@@ -303,11 +303,11 @@ function CampaignsContent() {
   );
 }
 
-function CampaignMedia({ thumbnail, videoUrl, postUrl, campaignId, onPlay }: {
+function CampaignMedia({ thumbnail, videoUrl, postUrl, campaignHref, onPlay }: {
   thumbnail?: string;
   videoUrl?: string;
   postUrl: string | null;
-  campaignId: string;
+  campaignHref: string;
   onPlay: () => void;
 }) {
   const { t } = useI18n();
@@ -322,5 +322,5 @@ function CampaignMedia({ thumbnail, videoUrl, postUrl, campaignId, onPlay }: {
     </>
   );
   const className = "relative h-16 w-12 shrink-0 overflow-hidden rounded-lg bg-surface-hover sm:h-20 sm:w-16";
-  return videoUrl ? <button type="button" onClick={onPlay} aria-label={t("Play reel preview")} className={className}>{media}</button> : postUrl ? <a href={postUrl} target="_blank" rel="noreferrer" aria-label={t("Open on Instagram")} className={className}>{media}</a> : <Link href={`/campaigns/${campaignId}`} className={className}>{media}</Link>;
+  return videoUrl ? <button type="button" onClick={onPlay} aria-label={t("Play reel preview")} className={className}>{media}</button> : postUrl ? <a href={postUrl} target="_blank" rel="noreferrer" aria-label={t("Open on Instagram")} className={className}>{media}</a> : <Link href={campaignHref} className={className}>{media}</Link>;
 }

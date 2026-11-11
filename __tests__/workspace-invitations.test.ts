@@ -4,10 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   accept: vi.fn(), session: vi.fn(), invite: vi.fn(), expire: vi.fn(),
-  membership: vi.fn(), cookie: vi.fn(), deleteCookie: vi.fn(),
+  membership: vi.fn(), cookie: vi.fn(), deleteCookie: vi.fn(), deleteSession: vi.fn(),
 }));
 
 vi.mock("next-auth", () => ({ default: () => ({ auth: mocks.session, handlers: {} }) }));
+vi.mock("@auth/prisma-adapter", () => ({ PrismaAdapter: () => ({ deleteSession: mocks.deleteSession }) }));
 vi.mock("@/lib/db/client", () => ({ prisma: {
   workspaceInvitation: { findUnique: mocks.invite, updateMany: mocks.expire },
   workspaceMember: { findUnique: mocks.membership },
@@ -23,6 +24,7 @@ vi.mock("next/headers", () => ({
 }));
 
 import { NextRequest } from "next/server";
+import { Prisma } from "@/app/generated/prisma/client";
 import { POST as acceptInvitation } from "@/app/api/workspace/invitations/accept/route";
 import InvitePage from "@/app/invite/[token]/page";
 import InvitationAcceptCard from "@/components/invitation-accept-card";
@@ -40,10 +42,10 @@ const invitation = {
   workspace: { name: "Client team" },
 };
 
-function invitationRequest() {
+function invitationRequest(origin = "https://openreply.example") {
   return new NextRequest("https://openreply.example/api/workspace/invitations/accept", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Origin: origin },
     body: JSON.stringify({ token: invitation.token }),
   });
 }
@@ -56,6 +58,13 @@ beforeEach(() => {
 });
 
 describe("workspace invitations", () => {
+  it("rejects cross-origin requests to select an invited workspace", async () => {
+    const response = await acceptInvitation(invitationRequest("https://elsewhere.example"));
+    expect(response.status).toBe(403);
+    expect(response.headers.has("set-cookie")).toBe(false);
+    expect(mocks.invite).not.toHaveBeenCalled();
+  });
+
   it("keeps the invitation as the return destination for sign-in", () => {
     const html = renderToStaticMarkup(createElement(InvitationAcceptCard, {
       token: invitation.token, matchingSession: false, accepted: false, invitedEmail: invitation.email,
@@ -98,6 +107,20 @@ describe("workspace invitations", () => {
     expect(response.status).toBe(expected);
     expect(response.headers.has("set-cookie")).toBe(false);
     expect(mocks.accept).not.toHaveBeenCalled();
+  });
+});
+
+describe("session cleanup during email sign-in", () => {
+  it("allows sign-in when the browser still has a session cookie already removed from the database", async () => {
+    mocks.deleteSession.mockRejectedValue(new Prisma.PrismaClientKnownRequestError("Session missing", {
+      code: "P2025", clientVersion: "test",
+    }));
+    await expect(authConfig.adapter.deleteSession("old-session")).resolves.toBeNull();
+  });
+
+  it("still reports unexpected errors while deleting a session", async () => {
+    mocks.deleteSession.mockRejectedValue(new Error("Database unavailable"));
+    await expect(authConfig.adapter.deleteSession("old-session")).rejects.toThrow("Database unavailable");
   });
 });
 

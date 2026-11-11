@@ -21,7 +21,9 @@ describe("Instagram account handoff", () => {
     expect(accountScopedHref("/dashboard", "berraz")).toBe("/dashboard?instagramAccountId=berraz");
     expect(accountScopedHref("/campaigns/new?template=starter", "berraz"))
       .toBe("/campaigns/new?template=starter&instagramAccountId=berraz");
-    expect(accountScopedHref("/settings#musa", "berraz")).toBe("/settings#musa");
+    expect(accountScopedHref("/settings#musa", "berraz")).toBe("/settings?instagramAccountId=berraz#musa");
+    expect(accountScopedHref("/campaigns/campaign-a/flow", "berraz")).toBe("/campaigns/campaign-a/flow?instagramAccountId=berraz");
+    expect(accountScopedHref("https://elsewhere.example/dashboard", "berraz")).toBe("https://elsewhere.example/dashboard");
     expect(accountScopedHref("/campaigns", "all")).toBe("/campaigns");
   });
 

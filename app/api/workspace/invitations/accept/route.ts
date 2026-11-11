@@ -3,10 +3,17 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 import { normalizeInvitationEmail } from "@/lib/workspace-invitations";
 import { acceptWorkspaceInvitation } from "@/lib/auth-admission";
-import { workspaceSelectionResponse } from "@/lib/workspace-management";
+import { readWorkspaceInput, requireWorkspaceOrigin, workspaceManagementErrorResponse, workspaceSelectionResponse } from "@/lib/workspace-management";
 import { findWorkspaceMembership } from "@/lib/workspace-selection";
 
 export async function POST(request: NextRequest) {
+  let input: unknown;
+  try {
+    requireWorkspaceOrigin(request);
+    input = await readWorkspaceInput(request);
+  } catch (error) {
+    return workspaceManagementErrorResponse(error);
+  }
   const session = await auth();
   if (!session?.user?.id || !session.user.email) {
     return NextResponse.json(
@@ -15,8 +22,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const body = await request.json().catch(() => ({}));
-  const token = typeof body.token === "string" ? body.token : null;
+  const token = input && typeof input === "object" && "token" in input && typeof input.token === "string" ? input.token : null;
   if (!token) {
     return NextResponse.json(
       { success: false, error: "Missing invitation token" },

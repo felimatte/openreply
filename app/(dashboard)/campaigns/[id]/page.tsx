@@ -14,6 +14,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
 import StatCard from "@/components/stat-card";
+import { useAccountFilter } from "@/components/use-account-filter";
+import { accountScopedHref } from "@/components/workspace-navigation";
 
 interface Campaign {
   id: string;
@@ -64,6 +66,8 @@ export default function CampaignDetailPage() {
   const { t } = useI18n();
   const router = useRouter();
   const { id } = useParams<{ id: string }>();
+  const [profileAccountId] = useAccountFilter();
+  const campaignsHref = accountScopedHref("/campaigns", profileAccountId);
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [loading, setLoading] = useState(true);
@@ -151,7 +155,7 @@ export default function CampaignDetailPage() {
       <div className="panel rounded p-8 text-center">
         <p className="text-sm text-muted">{t("Campaign not found.")}</p>
         <button
-          onClick={() => router.push("/campaigns")}
+          onClick={() => router.push(campaignsHref)}
           className="mt-4 rounded border border-border px-4 py-2 text-sm text-muted hover:text-foreground"
         >
           {t("Back to campaigns")}
@@ -187,7 +191,7 @@ export default function CampaignDetailPage() {
 
   return (
     <div className="space-y-6">
-      <Link href="/campaigns" className="inline-flex text-xs font-medium text-muted hover:text-foreground">{t("← Campaigns")}</Link>
+      <Link href={campaignsHref} className="inline-flex text-xs font-medium text-muted hover:text-foreground">{t("← Campaigns")}</Link>
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{campaign.name}</h1><span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${campaign.isActive ? "bg-success/10 text-success" : "bg-surface-hover text-muted"}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current" />{campaign.isActive ? t("Active") : t("Paused")}</span></div><p className="mt-2 text-sm text-muted">@{campaign.instagramAccount.username}</p></div>
         <div className="flex flex-wrap items-center gap-2">

@@ -9,6 +9,7 @@
 import { useI18n } from "@/lib/i18n/provider";
 import { useEffect, useState, useCallback, useRef } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
+import { useAccountFilter } from "@/components/use-account-filter";
 import StatusBadge from "@/components/status-badge";
 
 interface DmLog {
@@ -47,7 +48,7 @@ export default function LogsPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("ALL");
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState("all");
+  const [selectedAccountId, setSelectedAccountId] = useAccountFilter();
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);

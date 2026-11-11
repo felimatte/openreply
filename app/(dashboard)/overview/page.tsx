@@ -13,6 +13,7 @@ import type { Locale } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/provider";
 import { useEffect, useState } from "react";
 import AccountSelect from "@/components/account-select";
+import { useAccountFilter } from "@/components/use-account-filter";
 import StatCard from "@/components/stat-card";
 import FollowerChart from "@/components/follower-chart";
 import type { OverviewResponse } from "@/app/api/instagram/overview/route";
@@ -41,7 +42,7 @@ export default function OverviewPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedAccountId, setSelectedAccountId] = useState("all");
+  const [selectedAccountId, setSelectedAccountId] = useAccountFilter();
   const [count, setCount] = useState("50");
   const [retry, setRetry] = useState(0);
   const [search, setSearch] = useState("");

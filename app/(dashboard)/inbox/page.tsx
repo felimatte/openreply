@@ -15,6 +15,7 @@ import Link from "next/link";
 import { useI18n } from "@/lib/i18n/provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
+import { useAccountFilter } from "@/components/use-account-filter";
 import MessageField from "@/components/message-field";
 import { getWorkspaceStorageKey, readCache, writeCache } from "@/lib/client-cache";
 import type { ConversationListItem } from "@/app/api/instagram/conversations/route";
@@ -41,6 +42,7 @@ function formatTime(iso: string | null, locale: Locale): string {
 
 export default function InboxPage() {
   const { t, locale } = useI18n();
+  const [profileAccount, setProfileAccount] = useAccountFilter();
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [accountsLoading, setAccountsLoading] = useState(true);
   const [accountsError, setAccountsError] = useState<string | null>(null);
@@ -48,6 +50,7 @@ export default function InboxPage() {
   // Seed from the last-used account so a revisit can paint the cached
   // conversation list immediately, before the account list even loads.
   const [selectedAccountId, setSelectedAccountId] = useState(() => {
+    if (profileAccount !== "all") return profileAccount;
     if (typeof window === "undefined") return "";
     return window.sessionStorage.getItem(getWorkspaceStorageKey("inbox:selectedAccount")) ?? "";
   });
@@ -320,6 +323,7 @@ export default function InboxPage() {
           if (activeId) draftsRef.current[activeId] = draft;
           selectionRef.current = { accountId: id, conversationId: null };
           setSelectedAccountId(id);
+          setProfileAccount(id);
         }} includeAll={false} />}
       </div>
 

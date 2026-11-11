@@ -18,7 +18,7 @@ interface TopBarProps { onMenuClick: () => void; onSearchClick: () => void; side
 export default function TopBar({ onMenuClick, onSearchClick, sidebarOpen, instagramUsername, instagramAccountCount, workspaceProfiles, accountId }: TopBarProps) {
   const { t } = useI18n();
   const pathname = usePathname();
-  const settingsHref = workspaceHref("/settings", pathname.startsWith("/demo"));
+  const settingsHref = workspaceHref(accountScopedHref("/settings", accountId), pathname.startsWith("/demo"));
   const title = pageTitles[pathname] ?? (pathname.endsWith("/edit") ? "Edit campaign" : pathname.startsWith("/campaigns/") ? "Campaign details" : "Dashboard");
   const campaignDetail = pathname.startsWith("/campaigns/");
   const canSwitch = workspaceProfiles && (workspaceProfiles.length > 1 || instagramAccountCount > 1);

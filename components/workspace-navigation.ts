@@ -11,7 +11,8 @@ export function workspaceHref(href: string, demo: boolean): string {
 export function accountScopedHref(href: string, accountId: string | null): string {
   if (!accountId || accountId === "all") return href;
   const url = new URL(href, "https://openreply.local");
-  if (!["/dashboard", "/campaigns", "/campaigns/new"].includes(url.pathname) || url.origin !== "https://openreply.local") {
+  const workspaceRoute = workspaceNavigation.some(({ href: root }) => url.pathname === root || url.pathname.startsWith(root + "/"));
+  if (!workspaceRoute || url.origin !== "https://openreply.local") {
     return href;
   }
   url.searchParams.set("instagramAccountId", accountId);
