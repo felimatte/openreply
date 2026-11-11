@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { usePathname } from "next/navigation";
+import { Suspense, useCallback, useEffect, useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useI18n } from "@/lib/i18n/provider";
 import QuickNavigation from "@/components/quick-navigation";
 import Sidebar from "@/components/sidebar";
 import TopBar from "@/components/top-bar";
+import type { WorkspaceProfile } from "@/components/workspace-profile-switcher";
 
 interface DashboardShellProps {
   children: React.ReactNode;
@@ -14,16 +15,29 @@ interface DashboardShellProps {
   avatarEditable?: boolean;
   instagramUsername: string | null;
   instagramAccountCount: number;
+  workspaceProfiles?: WorkspaceProfile[];
 }
 
-export default function DashboardShell({
+export default function DashboardShell(props: DashboardShellProps) {
+  if (!props.workspaceProfiles) return <DashboardFrame {...props} accountId={null} />;
+  return <Suspense><ScopedDashboardFrame {...props} /></Suspense>;
+}
+
+function ScopedDashboardFrame(props: DashboardShellProps) {
+  const accountId = useSearchParams().get("instagramAccountId");
+  return <DashboardFrame {...props} accountId={accountId} />;
+}
+
+function DashboardFrame({
   children,
   workspaceName,
   profileImage,
   avatarEditable = true,
   instagramUsername,
   instagramAccountCount,
-}: DashboardShellProps) {
+  workspaceProfiles,
+  accountId,
+}: DashboardShellProps & { accountId: string | null }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -56,6 +70,7 @@ export default function DashboardShell({
         workspaceName={workspaceName}
         profileImage={profileImage}
         avatarEditable={avatarEditable}
+        accountId={accountId}
       />
 
       <div inert={sidebarOpen} className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -65,6 +80,8 @@ export default function DashboardShell({
           sidebarOpen={sidebarOpen}
           instagramUsername={instagramUsername}
           instagramAccountCount={instagramAccountCount}
+          workspaceProfiles={workspaceProfiles}
+          accountId={accountId}
         />
 
         {/* overflow-x-hidden: enabling vertical scrolling makes the browser
@@ -76,7 +93,7 @@ export default function DashboardShell({
           </div>
         </main>
       </div>
-      {searchOpen && <QuickNavigation open={searchOpen} onClose={closeSearch} demo={pathname.startsWith("/demo")} />}
+      {searchOpen && <QuickNavigation open={searchOpen} onClose={closeSearch} demo={pathname.startsWith("/demo")} accountId={accountId} />}
     </div>
   );
 }

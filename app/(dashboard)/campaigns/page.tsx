@@ -7,12 +7,14 @@
  */
 
 import { useI18n } from "@/lib/i18n/provider";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import AppIcon from "@/components/app-icon";
 
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import { readCache, writeCache } from "@/lib/client-cache";
+import { accountScopedHref } from "@/components/workspace-navigation";
 
 interface Campaign {
   id: string;
@@ -66,10 +68,14 @@ interface Campaign {
 }
 
 export default function CampaignsPage() {
+  return <Suspense><CampaignsContent /></Suspense>;
+}
+
+function CampaignsContent() {
   const { t, label, locale } = useI18n();
+  const selectedAccountId = useSearchParams().get("instagramAccountId") ?? "all";
   const [automations, setAutomations] = useState<Campaign[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState("all");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -83,6 +89,7 @@ export default function CampaignsPage() {
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "paused">("all");
   const requestVersion = useRef(0);
   const videoDialog = useRef<HTMLDialogElement>(null);
+  const newCampaignHref = accountScopedHref("/campaigns/new", selectedAccountId);
 
   const fetchAutomations = useCallback(async () => {
     const version = ++requestVersion.current;
@@ -102,7 +109,7 @@ export default function CampaignsPage() {
     } finally {
       if (version === requestVersion.current) setLoading(false);
     }
-  }, [selectedAccountId]);
+  }, [selectedAccountId, setAutomations, setLoadError, setLoading]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -229,7 +236,7 @@ export default function CampaignsPage() {
         <div><h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">{t("Campaigns")}</h1><p className="mt-2 text-sm text-muted">{t("Manage your campaigns and see what is working.")}</p></div>
         <div className="flex items-center gap-2">
           <Link href="/campaigns/import" className="inline-flex min-h-11 flex-1 items-center justify-center rounded-xl border border-border bg-surface px-4 text-sm font-medium transition-colors hover:bg-surface-hover sm:flex-none">{t("Import")}</Link>
-          <Link href="/campaigns/new" className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hover sm:flex-none"><AppIcon name="plus" className="h-4 w-4" />{t("New Campaign")}</Link>
+          <Link href={newCampaignHref} className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hover sm:flex-none"><AppIcon name="plus" className="h-4 w-4" />{t("New Campaign")}</Link>
         </div>
       </header>
 
@@ -247,12 +254,15 @@ export default function CampaignsPage() {
             {(["all", "active", "paused"] as const).map((status) => <button key={status} type="button" onClick={() => setStatusFilter(status)} aria-pressed={statusFilter === status} className={`inline-flex min-h-9 items-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors sm:text-sm ${statusFilter === status ? "bg-accent text-white" : "text-muted hover:bg-surface-hover hover:text-foreground"}`}>{label(status)}<span className={`rounded-md px-1.5 py-0.5 text-[10px] tabular-nums ${statusFilter === status ? "bg-white/15 text-white" : "bg-surface-hover text-muted"}`}>{status === "all" ? automations.length : status === "active" ? activeCount : automations.length - activeCount}</span></button>)}
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            {accounts.length > 1 && <AccountSelect accounts={accounts} value={selectedAccountId} onChange={(accountId) => { setLoading(true); setSelectedAccountId(accountId); }} />}
+            {accounts.length > 1 && <AccountSelect accounts={accounts} value={selectedAccountId} onChange={(accountId) => {
+              setLoading(true);
+              window.history.replaceState(null, "", accountScopedHref("/campaigns", accountId));
+            }} />}
             <div className="relative w-full sm:w-72"><svg aria-hidden="true" className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.6"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 4 4" /></svg><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} aria-label={t("Search campaigns by name, keyword, or message…")} placeholder={t("Search campaigns by name, keyword, or message…")} className="min-h-10 w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-3 text-sm placeholder:text-muted" /></div>
           </div>
         </div>
 
-        {loadError ? null : loading && automations.length === 0 ? <div className="space-y-3" aria-label={t("Loading…")}>{Array.from({ length: 3 }, (_, index) => <div key={index} className="panel h-36 animate-pulse" />)}</div> : !loadError && automations.length === 0 ? <div className="panel px-6 py-16 text-center"><div aria-hidden="true" className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl border border-border bg-background text-2xl text-muted"><AppIcon name="campaign" className="h-6 w-6" /></div><h2 className="text-lg font-semibold">{t("No campaigns yet")}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">{t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")}</p><Link href="/campaigns/new" className="mt-6 inline-flex rounded-xl bg-accent px-5 py-3 text-sm font-medium text-white">{t("Create Campaign")}</Link></div> : filtered.length === 0 && !loadError ? <div className="panel px-6 py-14 text-center"><p className="text-sm text-muted">{t("No campaigns match your search.")}</p><button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium">{t("Clear filters")}</button></div> : (
+        {loadError ? null : loading && automations.length === 0 ? <div className="space-y-3" aria-label={t("Loading…")}>{Array.from({ length: 3 }, (_, index) => <div key={index} className="panel h-36 animate-pulse" />)}</div> : !loadError && automations.length === 0 ? <div className="panel px-6 py-16 text-center"><div aria-hidden="true" className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl border border-border bg-background text-2xl text-muted"><AppIcon name="campaign" className="h-6 w-6" /></div><h2 className="text-lg font-semibold">{t("No campaigns yet")}</h2><p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted">{t("Create your first comment-to-DM campaign to turn a post or reel into a measurable conversation flow.")}</p><Link href={newCampaignHref} className="mt-6 inline-flex rounded-xl bg-accent px-5 py-3 text-sm font-medium text-white">{t("Create Campaign")}</Link></div> : filtered.length === 0 && !loadError ? <div className="panel px-6 py-14 text-center"><p className="text-sm text-muted">{t("No campaigns match your search.")}</p><button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }} className="mt-4 rounded-lg border border-border px-4 py-2 text-sm font-medium">{t("Clear filters")}</button></div> : (
           <div inert={loading} className={`space-y-3 transition-opacity ${loading ? "opacity-50" : ""}`}>
             <p className="px-1 text-xs text-muted" aria-live="polite">{t("{count} of {total} campaigns", { count: filtered.length, total: automations.length })}</p>
             {filtered.map((campaign) => {

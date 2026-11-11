@@ -3,10 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppIcon from "@/components/app-icon";
-import { workspaceHref, workspaceNavigation } from "@/components/workspace-navigation";
+import { accountScopedHref, workspaceHref, workspaceNavigation } from "@/components/workspace-navigation";
 import { useI18n } from "@/lib/i18n/provider";
 
-export default function QuickNavigation({ open, onClose, demo = false }: { open: boolean; onClose: () => void; demo?: boolean }) {
+export default function QuickNavigation({ open, onClose, demo = false, accountId = null }: { open: boolean; onClose: () => void; demo?: boolean; accountId?: string | null }) {
   const { t } = useI18n();
   const router = useRouter();
   const dialog = useRef<HTMLDialogElement>(null);
@@ -14,8 +14,8 @@ export default function QuickNavigation({ open, onClose, demo = false }: { open:
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
   const actions = [
-    { label: t("New Campaign"), href: demo ? "/demo/flow" : "/campaigns/new", icon: "plus" as const },
-    ...workspaceNavigation.map(item => ({ ...item, label: t(item.label), href: workspaceHref(item.href, demo) })),
+    { label: t("New Campaign"), href: demo ? "/demo/flow" : accountScopedHref("/campaigns/new", accountId), icon: "plus" as const },
+    ...workspaceNavigation.map(item => ({ ...item, label: t(item.label), href: workspaceHref(accountScopedHref(item.href, accountId), demo) })),
   ].filter(item => `${item.label} ${item.href}`.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
   const activeIndex = Math.min(selected, Math.max(actions.length - 1, 0));
 

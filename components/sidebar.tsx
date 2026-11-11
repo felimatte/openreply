@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import LanguageSwitcher from "@/components/language-switcher";
 import AppIcon from "@/components/app-icon";
-import { workspaceHref, workspaceNavigation } from "@/components/workspace-navigation";
+import { accountScopedHref, workspaceHref, workspaceNavigation } from "@/components/workspace-navigation";
 import { useI18n } from "@/lib/i18n/provider";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -15,9 +15,10 @@ interface SidebarProps {
   workspaceName: string;
   profileImage: string | null;
   avatarEditable: boolean;
+  accountId: string | null;
 }
 
-export default function Sidebar({ isOpen, onClose, onSearch, workspaceName, profileImage: initialProfileImage, avatarEditable }: SidebarProps) {
+export default function Sidebar({ isOpen, onClose, onSearch, workspaceName, profileImage: initialProfileImage, avatarEditable, accountId }: SidebarProps) {
   const { t } = useI18n();
   const pathname = usePathname();
   const drawer = useRef<HTMLElement>(null);
@@ -80,7 +81,7 @@ export default function Sidebar({ isOpen, onClose, onSearch, workspaceName, prof
 
   function navLink(item: typeof workspaceNavigation[number]) {
     const active = pathname === item.href || pathname.startsWith(item.href + "/") || (item.href === "/dashboard" && pathname === "/demo") || (item.href === "/campaigns" && pathname.startsWith("/automations"));
-    return <Link key={item.href} href={workspaceHref(item.href, isDemo)} onClick={onClose} title={isDemo && item.href !== "/dashboard" ? t("Sign in to open this section") : undefined} aria-current={active ? "page" : undefined} className="nav-link"><AppIcon name={item.icon} /><span>{t(item.label)}</span></Link>;
+    return <Link key={item.href} href={workspaceHref(accountScopedHref(item.href, accountId), isDemo)} onClick={onClose} title={isDemo && item.href !== "/dashboard" ? t("Sign in to open this section") : undefined} aria-current={active ? "page" : undefined} className="nav-link"><AppIcon name={item.icon} /><span>{t(item.label)}</span></Link>;
   }
 
   return <>
@@ -88,7 +89,7 @@ export default function Sidebar({ isOpen, onClose, onSearch, workspaceName, prof
     <aside ref={drawer} id="workspace-navigation" aria-label={t("Workspace")} role={isOpen ? "dialog" : undefined} aria-modal={isOpen ? true : undefined} className={`brand-sidebar fixed top-0 left-0 z-50 flex h-dvh w-[236px] max-w-[85vw] shrink-0 flex-col border-r border-border transition-transform duration-200 lg:static lg:z-auto lg:h-full lg:translate-x-0 lg:visible ${isOpen ? "translate-x-0 visible" : "-translate-x-full invisible"}`}>
       <div className="px-5 pb-5 pt-7" style={{ paddingTop: "calc(1.75rem + env(safe-area-inset-top))" }}>
         <div className="flex items-center justify-between">
-          <Link href={isDemo ? "/demo" : "/dashboard"} onClick={onClose} className="flex items-center gap-2.5 text-[17px] font-semibold tracking-[-0.6px]"><span className="flex size-8 items-center justify-center rounded-[10px] bg-accent text-white"><AppIcon name="inbox" className="size-[19px]" /></span>OpenReply<span className="text-muted">.</span></Link>
+          <Link href={isDemo ? "/demo" : accountScopedHref("/dashboard", accountId)} onClick={onClose} className="flex items-center gap-2.5 text-[17px] font-semibold tracking-[-0.6px]"><span className="flex size-8 items-center justify-center rounded-[10px] bg-accent text-white"><AppIcon name="inbox" className="size-[19px]" /></span>OpenReply<span className="text-muted">.</span></Link>
           <button type="button" onClick={onClose} aria-label={t("Close navigation")} className="rounded-lg p-2 text-muted hover:bg-surface-hover lg:hidden"><AppIcon name="close" /></button>
         </div>
         <button type="button" onClick={() => { onClose(); onSearch(); }} className="mt-7 flex w-full items-center gap-2 rounded-lg border border-border bg-white px-3 py-2.5 text-xs text-muted hover:border-border-hover" aria-label={t("Quick navigation")}><AppIcon name="search" className="size-3.5" /><span>{t("Search")}</span><kbd className="keyboard-hint ml-auto">Ctrl / ⌘ K</kbd></button>
