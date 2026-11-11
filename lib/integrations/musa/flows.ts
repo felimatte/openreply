@@ -71,25 +71,26 @@ async function loadPublicationFlowBundle(tx: Prisma.TransactionClient, context: 
 
 /** Copy the complete chain under the same transaction as its publication UUID. */
 export async function copyMusaPublicationFlow(tx: Prisma.TransactionClient, context: MusaConnectionContext,
-  accountId: string, flowId: string, revision: string) {
+  accountId: string, flowId: string, revision: string, story = false) {
   requireMusaAccount(context, accountId);
   const bundle = await loadPublicationFlowBundle(tx, context, accountId, flowId);
   if (bundle.root.automation.musaScheduledPublicationId)
     throw new MusaIntegrationError(409, "FLOW_CHANGED", "Choose a reusable flow instead of a scheduled Reel");
   if (musaFlowRevision(bundle.root, bundle.sources) !== revision)
     throw new MusaIntegrationError(409, "FLOW_CHANGED", "Choose the current published flow chain again");
-  return persistMusaFlowBundle(tx, context.workspaceId, accountId, bundle);
+  return persistMusaFlowBundle(tx, context.workspaceId, accountId, bundle, story ? "story" : "publication");
 }
 
 /** Freeze a newly created root version on its original campaign, with private subflows. */
 export async function freezeScheduledMusaFlow(tx: Prisma.TransactionClient, scheduler: Scheduler, versionId: string) {
   const workspaceId = scheduler.connection.workspaceId;
   const bundle = await loadPublicationFlowBundle(tx, { workspaceId }, scheduler.account.id, versionId);
-  return persistMusaFlowBundle(tx, workspaceId, scheduler.account.id, bundle, true);
+  return persistMusaFlowBundle(tx, workspaceId, scheduler.account.id, bundle, "scheduled-reel");
 }
 
 async function persistMusaFlowBundle(tx: Prisma.TransactionClient, workspaceId: string, accountId: string,
-  bundle: { root: MusaFlowSource; sources: MusaFlowSource[] }, keepSourceRoot = false) {
+  bundle: { root: MusaFlowSource; sources: MusaFlowSource[] }, kind: "publication" | "story" | "scheduled-reel") {
+  const keepSourceRoot = kind === "scheduled-reel";
   const ids = new Map(bundle.sources.map(source => [source.automation.id,
     keepSourceRoot && source.id === bundle.root.id ? { campaign: source.automation.id, version: source.id }
       : { campaign: `musa_flow_${keepSourceRoot ? "scheduled_" : ""}${randomUUID()}`, version: randomUUID() }]));
@@ -99,7 +100,9 @@ async function persistMusaFlowBundle(tx: Prisma.TransactionClient, workspaceId: 
     const graph = sourceGraph(source)!;
     const remapped = { ...graph, nodes: graph.nodes.map(node => node.type === "action" && node.data.action === "start_flow"
       ? { ...node, data: { ...node.data, automationId: ids.get(node.data.automationId!)!.campaign } } : node) };
-    return { ...settings(source.automation), id: target.campaign, name: source.automation.name,
+    return { ...settings(source.automation),
+      ...(kind === "story" ? { publicReplyEnabled: false, publicReplyMessage: null, publicReplyMessages: [] } : {}),
+      id: target.campaign, name: source.automation.name,
       workspaceId, instagramAccountId: accountId, createdAt: now, updatedAt: now,
       isActive: false, postId: null, postUrl: null, pendingNextReel: false, nextReelArmedAt: null,
       matchAnyPost: false, dmTriggerEnabled: false, reportShareSlug: generateReportShareSlug(), reportShareEnabled: false,

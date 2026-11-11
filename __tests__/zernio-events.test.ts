@@ -37,6 +37,13 @@ describe('Zernio event boundary', () => {
     const read = normalizeZernioEvent({ account, payload: { ...envelope, event: 'message.read', conversation: { participantId: 'person1' }, statusAt: '2026-09-08T00:00:00Z' } });
     expect(parseReadEvents(read!)[0]).toEqual({ instagramAccountId: 'ig1', userId: 'person1', watermark: 1788825600000 });
   });
+  it('keeps only the native story id when somebody replies to a story, excluding mentions', () => {
+    const payload = { ...envelope, event: 'message.received', message: { platformMessageId: 'mid', direction: 'incoming', text: 'LINK',
+      sender: { id: 'person1' } }, metadata: { storyReply: { storyId: 'native-story-id', storyUrl: 'https://cdn.example.invalid/story' } } };
+    expect(parseMessageEvents(normalizeZernioEvent({ payload, account })!)[0]).toMatchObject({ storyId: 'native-story-id' });
+    expect(parseMessageEvents(normalizeZernioEvent({ payload: { ...payload, metadata: { ...payload.metadata, isStoryMention: true } }, account })!)[0])
+      .not.toHaveProperty('storyId');
+  });
   it('rejects malformed and unrelated events', () => {
     for (const payload of [null, {}, { ...envelope, event: 'post.published' }, { ...envelope, event: 'message.received', message: {} }]) {
       expect(normalizeZernioEvent({ payload, account })).toBeNull();

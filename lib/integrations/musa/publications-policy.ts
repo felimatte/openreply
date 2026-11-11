@@ -29,7 +29,7 @@ const legacyPublicationInputSchema = z.object({
   campaignId: z.string().min(1).max(128).optional(),
   ...publicationOptions,
 }).strict();
-export const MUSA_PUBLICATION_FORMATS = ["reel", "image", "carousel"] as const;
+export const MUSA_PUBLICATION_FORMATS = ["reel", "image", "carousel", "story"] as const;
 export type MusaPublicationFormat = typeof MUSA_PUBLICATION_FORMATS[number];
 const mediaItem = z.object({
   type: z.enum(["image", "video"]),
@@ -43,8 +43,10 @@ const modernPublicationInputSchema = z.object({
   ...publicationOptions,
 }).strict().superRefine((input, ctx) => {
   const valid = input.format === "carousel" ? input.mediaItems.length >= 2
-    : input.mediaItems.length === 1 && input.mediaItems[0].type === (input.format === "reel" ? "video" : "image");
+    : input.mediaItems.length === 1 && (input.format === "story" || input.mediaItems[0].type === (input.format === "reel" ? "video" : "image"));
   if (!valid) ctx.addIssue({ code: "custom", path: ["mediaItems"], message: "Media must match the selected format" });
+  if (input.format === "story" && input.campaignId)
+    ctx.addIssue({ code: "custom", path: ["campaignId"], message: "Stories require a versioned flow instead of a comment campaign" });
 });
 export const musaPublicationInputSchema = z.union([legacyPublicationInputSchema, modernPublicationInputSchema]).superRefine((input, ctx) => {
   const flowFields = [input.flowId, input.flowRevision, input.activateOnPublish].filter(value => value !== undefined).length;

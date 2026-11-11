@@ -444,3 +444,58 @@ describe("safe receipt reconciliation", () => {
     expect(mocks.pollMeta).not.toHaveBeenCalled();
   });
 });
+
+describe("MUSA story receipts", () => {
+  const story = { accountId: input.accountId, caption: "Editorial", format: "story" as const,
+    mediaItems: [{ type: "image" as const, url: "https://cdn.example.com/story.jpg" }] };
+  const configured = { ...story, flowId: "version-a", flowRevision: "a".repeat(64), activateOnPublish: true as const };
+  const receipt = (extra: Partial<MusaPublication> = {}) => record({ stage: "META_READY", containerId: "story-container",
+    payload: configured, payloadHash: publicationPayloadHash(configured), campaignId: "musa_flow_copy-a",
+    campaignUpdatedAt: baseTime, flowCampaignIds: ["musa_flow_copy-a"], ...extra });
+
+  it("validates a single image or video and rejects Reel-only modes and comment campaigns", () => {
+    expect(musaPublicationInputSchema.safeParse(story).success).toBe(true);
+    expect(musaPublicationInputSchema.safeParse({ ...story, mediaItems: [{ type: "video", url: input.videoUrl }] }).success).toBe(true);
+    for (const data of [{ mediaItems: [] }, { mediaItems: [...story.mediaItems, ...story.mediaItems] },
+      { campaignId: "comment" }, { trialReel: { graduationStrategy: "MANUAL" } }]) {
+      expect(musaPublicationInputSchema.safeParse({ ...story, ...data }).success).toBe(false);
+    }
+  });
+  it("publishes a story without a flow and without reading a permalink", async () => {
+    stored = receipt({ payload: story, payloadHash: publicationPayloadHash(story), campaignId: null, flowCampaignIds: [] });
+    const result = await advanceMusaPublication(context, publicationId, story);
+    expect(result).toMatchObject({ status: "published", mediaId: "media-a", permalink: null });
+    expect(result).not.toHaveProperty("automation");
+    expect(mocks.permalink).not.toHaveBeenCalled();
+    expect(mocks.campaign.updateMany).not.toHaveBeenCalled();
+  });
+  it("activates the frozen chain only once after saving the exact Instagram ID, without a comment target", async () => {
+    stored = receipt();
+    mocks.campaign.findFirst.mockResolvedValue({ id: "musa_flow_copy-a", isActive: false, postId: null, matchAnyPost: false, dmTriggerEnabled: false });
+    mocks.campaign.findMany.mockResolvedValue([{ id: "musa_flow_copy-a" }]);
+    const result = await advanceMusaPublication(context, publicationId, configured);
+    expect(result).toMatchObject({ status: "published", mediaId: "media-a", automation: { status: "active" } });
+    expect(mocks.campaign.updateMany.mock.calls[0][0].data).toMatchObject({ postId: null, postUrl: null });
+    expect(mocks.campaign.updateMany.mock.calls[1][0].data).toMatchObject({ isActive: true, flowEnabled: true });
+    await advanceMusaPublication(context, publicationId, configured);
+    expect(mocks.publishMeta).toHaveBeenCalledTimes(1);
+    expect(mocks.campaign.updateMany).toHaveBeenCalledTimes(2);
+  });
+  it("does not activate after a Meta container-only confirmation", async () => {
+    stored = receipt({ status: "uncertain", stage: "META_PUBLISHING" });
+    mocks.pollMeta.mockResolvedValue("PUBLISHED");
+    expect(await getMusaPublication(context, publicationId)).toMatchObject({ status: "published", mediaId: null,
+      confirmation: { containerId: "story-container" }, automation: { status: "failed", errorCode: "MEDIA_ID_UNAVAILABLE" } });
+    expect(mocks.campaign.updateMany).not.toHaveBeenCalled();
+  });
+  it("does not use Zernio's internal post ID as the story target", async () => {
+    const zernioContext = { ...context, accounts: [{ ...context.accounts[0], provider: "ZERNIO" as const }] };
+    mocks.context.mockResolvedValue({ provider: "ZERNIO", accountId: "remote-account" });
+    stored = receipt({ provider: "ZERNIO", stage: "ZERNIO_PROCESSING", providerPostId: "zernio-id" });
+    mocks.readZernio.mockReturnValue({ postId: "zernio-id", status: "published", mediaId: "zernio-id", permalink: null });
+    expect(await advanceMusaPublication(zernioContext, publicationId, configured)).toMatchObject({
+      status: "uncertain", mediaId: null, errorCode: "PUBLICATION_ID_UNAVAILABLE",
+    });
+    expect(mocks.campaign.updateMany).not.toHaveBeenCalled();
+  });
+});

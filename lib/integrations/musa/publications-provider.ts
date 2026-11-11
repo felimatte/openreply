@@ -63,8 +63,9 @@ const remoteId = z.object({ id: z.string().min(1) });
 export async function createMetaContainer(context: InstagramContext, instagramId: string, input: MusaPublicationInput) {
   const format = publicationFormat(input), media = publicationMedia(input), cover = publicationCover(input);
   if (format === "carousel") throw new MusaProviderError("PUBLICATION_STATE_INVALID");
+  const story = { media_type: "STORIES", ...(media[0].type === "image" ? { image_url: media[0].url } : { video_url: media[0].url }) };
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
-    method: "POST", body: { ...(format === "image" ? { image_url: media[0].url }
+    method: "POST", body: format === "story" ? story : { ...(format === "image" ? { image_url: media[0].url }
       : { media_type: "REELS", video_url: media[0].url, ...(cover ? { cover_url: cover } : {}),
         ...(input.trialReel ? { trial_params: { graduation_strategy: input.trialReel.graduationStrategy } } : {}) }), caption: input.caption },
   });
@@ -141,10 +142,12 @@ export function readZernioPublication(raw: unknown, accountId: string) {
 export async function createZernioPublication(context: Extract<InstagramContext, { provider: "ZERNIO" }>,
   input: MusaPublicationInput, publicationId: string, scheduledAt: Date) {
   const cover = publicationCover(input);
+  const story = publicationFormat(input) === "story";
   const platformSpecificData = { ...(cover ? { instagramThumbnail: cover } : {}),
+    ...(story ? { contentType: "story" } : {}),
     ...(input.trialReel ? { trialParams: { graduationStrategy: input.trialReel.graduationStrategy } } : {}) };
   return publicationProviderRequest(context, "/posts", { method: "POST", idempotencyKey: publicationId,
-    body: { content: input.caption, mediaItems: publicationMedia(input),
+    body: { content: story ? "" : input.caption, mediaItems: publicationMedia(input),
       // A near-future schedule delegates video processing to Zernio's worker.
       // publishNow is synchronous and can exceed a serverless request lifetime.
       scheduledFor: scheduledAt.toISOString(), timezone: "UTC",

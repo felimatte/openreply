@@ -6,10 +6,13 @@ export const runtime = "nodejs";
 export async function GET(request: Request) {
   try {
     const context = await requireMusaConnection(request);
+    const includeStory = new URL(request.url).searchParams.get("includeStory") === "1";
     const accounts = await Promise.all(context.accounts.map(async (account) => {
-      const capability = await getMusaPublishingCapability(account);
-      return { ...publicMusaAccount(account), ...capability, canPublishTrialReels: capability.canPublish,
-        trialUnavailableReason: capability.publishUnavailableReason, canAttachFlowOnPublish: true };
+      const { canAttachStoryFlowOnPublish, supportedFormats, ...capability } = await getMusaPublishingCapability(account, includeStory);
+      return { ...publicMusaAccount(account), ...capability,
+        supportedFormats: includeStory ? supportedFormats : supportedFormats.filter(format => format !== "story"),
+        canPublishTrialReels: capability.canPublish, trialUnavailableReason: capability.publishUnavailableReason,
+        canAttachFlowOnPublish: true, ...(includeStory ? { canAttachStoryFlowOnPublish } : {}) };
     }));
     return musaJson({ version: 1, accounts });
   } catch (error) { return musaErrorResponse(error); }

@@ -82,6 +82,13 @@ describe("MUSA published flow catalog and publication copy", () => {
     }
     expect(mocks.create).not.toHaveBeenCalled();
   });
+  it("turns off public replies in a story copy without mutating the source", async () => {
+    const original = source();
+    const copy = await copyMusaPublicationFlow(tx, context, accountId, original.id, musaFlowRevision(original), true);
+    expect(copy).toMatchObject({ publicReplyEnabled: false, publicReplyMessages: [], publicReplyMessage: null,
+      isActive: false, flowEnabled: false, keywords: ["GUIA"] });
+    expect(original.automation).toMatchObject({ publicReplyEnabled: true, publicReplyMessages: ["Te escribimos"] });
+  });
   it("includes conversation settings and published definition in the revision", () => {
     const original = source(), revision = musaFlowRevision(original);
     for (const changed of [

@@ -89,6 +89,7 @@ interface WebhookEntry {
       // Present when the message is a tapped quick reply. For the email and
       // phone quick replies, `text` carries the email or number itself.
       quick_reply?: { payload?: string };
+      reply_to?: { story?: { id?: string } };
     };
   }>;
 }
@@ -100,6 +101,7 @@ export interface WebhookMessageEvent {
   messageText: string;
   senderId: string;
   quickReplyPayload?: string;
+  storyId?: string;
 }
 
 export interface WebhookPostbackEvent {
@@ -246,12 +248,14 @@ export function parseMessageEvents(
       if (senderId === accountId) continue;
 
       const quickReplyPayload = message.quick_reply?.payload;
+      const storyId = message.reply_to?.story?.id;
       events.push({
         instagramAccountId: accountId,
         messageId,
         messageText: text,
         senderId,
         ...(quickReplyPayload ? { quickReplyPayload } : {}),
+        ...(typeof storyId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(storyId) ? { storyId } : {}),
         ...((eventTime(messaging.timestamp) ?? eventTime(entry.time)) ? { timestamp: eventTime(messaging.timestamp) ?? eventTime(entry.time) } : {}),
       });
     }

@@ -14,6 +14,15 @@ const context = { workspaceId: "workspace-a", accounts: [account] };
 beforeEach(() => { vi.resetAllMocks(); mocks.auth.mockResolvedValue(context); mocks.list.mockResolvedValue({ version: 1, flows: [] }); });
 
 describe("MUSA content route capabilities and flow boundary", () => {
+  it.each(["", "?includeStory=1"])("advertises stories only to clients that opt in: %s", async query => {
+    mocks.capability.mockResolvedValue({ canPublish: true, supportedFormats: ["reel", "image", "carousel", "story"],
+      publishUnavailableReason: null, canAttachStoryFlowOnPublish: true });
+    const body = await (await accounts(new Request("https://example.invalid/accounts" + query))).json();
+    expect(mocks.capability).toHaveBeenCalledExactlyOnceWith(account, Boolean(query));
+    expect(body.accounts[0].supportedFormats).toEqual(query ? ["reel", "image", "carousel", "story"] : ["reel", "image", "carousel"]);
+    if (query) expect(body.accounts[0].canAttachStoryFlowOnPublish).toBe(true);
+    else expect(body.accounts[0]).not.toHaveProperty("canAttachStoryFlowOnPublish");
+  });
   it.each([true, false])("exposes trial transport only with publishing authority: %s", async canPublish => {
     mocks.capability.mockResolvedValue({ canPublish, supportedFormats: canPublish ? ["reel", "image", "carousel"] : [],
       publishUnavailableReason: canPublish ? null : "PUBLISH_PERMISSION_REQUIRED" });

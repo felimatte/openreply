@@ -78,6 +78,9 @@ export interface ProcessMessageJob {
   senderId: string;
   // The tapped quick reply's payload, when the message is one.
   quickReplyPayload?: string;
+  storyId?: string;
+  storyWorkspaceId?: string;
+  storyRetry?: number;
 }
 
 export type DmQueueJob =

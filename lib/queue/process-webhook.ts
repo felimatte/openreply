@@ -110,6 +110,7 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
           messageText: event.messageText,
           senderId: event.senderId,
           timestamp: event.timestamp,
+          ...(event.storyId ? { storyId: event.storyId, storyWorkspaceId: account.workspaceId } : {}),
           ...(event.quickReplyPayload
             ? { quickReplyPayload: event.quickReplyPayload }
             : {}),
