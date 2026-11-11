@@ -2,13 +2,14 @@
 
 import { useI18n } from "@/lib/i18n/provider";
 import { Suspense, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import AppIcon from "@/components/app-icon";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import StatCard from "@/components/stat-card";
 import StatusBadge from "@/components/status-badge";
 import { WorkspaceConnectLink } from "@/components/workspace-connect-link";
+import { accountScopedHref } from "@/components/workspace-navigation";
+import { useAccountFilter } from "@/components/use-account-filter";
 
 interface DashboardStats {
   userName: string | null;
@@ -45,12 +46,11 @@ export default function DashboardPage() {
 
 function DashboardContent() {
   const { t, label, locale } = useI18n();
-  const searchParams = useSearchParams();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [selectedAccountId, setSelectedAccountId] = useState(searchParams.get("instagramAccountId") ?? "all");
+  const [selectedAccountId, setSelectedAccountId] = useAccountFilter();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -91,7 +91,7 @@ function DashboardContent() {
           <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">{t("Hello, {name}!", { name: stats?.userName ?? t("there") })}</h1>
           <p className="mt-2 text-sm text-muted">{t("Your conversations, at a glance.")}</p>
         </div>
-        <Link href="/campaigns/new" className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
+        <Link href={accountScopedHref("/campaigns/new", selectedAccountId)} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover">
           <AppIcon name="plus" className="h-4 w-4" />{t("New Campaign")}
         </Link>
       </div>
@@ -107,9 +107,12 @@ function DashboardContent() {
         <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border pb-5">
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted sm:text-sm">
             <span className="inline-flex items-center gap-2"><span className={`h-1.5 w-1.5 rounded-full ${connectedCount > 0 ? "bg-success" : "bg-muted"}`} />{t(connectedCount === 1 ? "{count} connected account" : "{count} connected accounts", { count: connectedCount })}</span>
-            <Link href="/contacts" className="hover:text-foreground">{t(stats.contactsCount === 1 ? "{count} contact" : "{count} contacts", { count: stats.contactsCount })} <span aria-hidden="true">↗</span></Link>
+            <Link href={accountScopedHref("/contacts", selectedAccountId)} className="hover:text-foreground">{t(stats.contactsCount === 1 ? "{count} contact" : "{count} contacts", { count: stats.contactsCount })} <span aria-hidden="true">↗</span></Link>
           </div>
-          {stats.instagramAccounts.length > 1 && <AccountSelect accounts={stats.instagramAccounts} value={selectedAccountId} onChange={(accountId) => { setLoading(true); setSelectedAccountId(accountId); }} />}
+          {stats.instagramAccounts.length > 1 && <AccountSelect accounts={stats.instagramAccounts} value={selectedAccountId} onChange={(accountId) => {
+            setLoading(true);
+            setSelectedAccountId(accountId);
+          }} />}
         </div>
 
         {connectedCount === 0 && (

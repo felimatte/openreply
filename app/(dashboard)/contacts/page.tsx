@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ContactAutomationControls from "@/components/contact-automation-controls";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
+import { useAccountFilter } from "@/components/use-account-filter";
 
 interface ContactRow {
   id: string;
@@ -67,7 +68,7 @@ export default function ContactsPage() {
   const [hasFilter, setHasFilter] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
-  const [selectedAccountId, setSelectedAccountId] = useState("all");
+  const [selectedAccountId, setSelectedAccountId] = useAccountFilter();
   const [page, setPage] = useState(1);
   const [tags, setTags] = useState<TagOption[]>([]);
   const [fields, setFields] = useState<FieldOption[]>([]);

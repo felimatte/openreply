@@ -24,17 +24,27 @@ export default async function DashboardLayout({
   }
 
   const workspace = context.workspace;
-  const [accounts, user] = await Promise.all([
-    prisma.instagramAccount.findMany({
-      where: { workspaceId: workspace.id },
-      orderBy: { connectedAt: "desc" },
-      select: { username: true },
+  const [memberships, user] = await Promise.all([
+    prisma.workspaceMember.findMany({
+      where: { userId: context.userId },
+      orderBy: { createdAt: "asc" },
+      select: {
+        workspace: {
+          select: {
+            id: true,
+            name: true,
+            instagramAccounts: { orderBy: { username: "asc" }, select: { id: true, username: true } },
+          },
+        },
+      },
     }),
     prisma.user.findUnique({
       where: { id: context.userId },
       select: { image: true },
     }),
   ]);
+  const profiles = memberships.map(({ workspace }) => workspace);
+  const accounts = profiles.find(({ id }) => id === workspace.id)?.instagramAccounts ?? [];
 
   return (
     <I18nProvider locale={locale}>
@@ -44,6 +54,7 @@ export default async function DashboardLayout({
           profileImage={user?.image ?? null}
           instagramUsername={accounts[0]?.username ?? null}
           instagramAccountCount={accounts.length}
+          workspaceProfiles={profiles}
         >
           {children}
         </DashboardShell>

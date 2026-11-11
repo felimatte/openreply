@@ -2,12 +2,14 @@ import NextAuth, { type NextAuthConfig } from "next-auth";
 import Nodemailer from "next-auth/providers/nodemailer";
 import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
+import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/db/client";
 import { ensureWorkspaceForUser } from "@/lib/workspace";
-import { resolveUserWorkspace } from "@/lib/workspace-selection";
+import { clearStaleWorkspaceSelection, resolveUserWorkspace } from "@/lib/workspace-selection";
 import { isEmailAdmittedToSignIn } from "@/lib/auth-admission";
 
 type AdapterPrismaClient = Parameters<typeof PrismaAdapter>[0];
+const prismaAdapter = PrismaAdapter(prisma as unknown as AdapterPrismaClient);
 
 const emailFrom = process.env.EMAIL_FROM ?? "OpenReply <login@example.com>";
 // Setting EMAIL_SERVER switches magic links to your own SMTP server, for
@@ -22,7 +24,18 @@ const smtpServer = process.env.EMAIL_SERVER;
 export const EMAIL_PROVIDER_ID = smtpServer ? "nodemailer" : "resend";
 
 export const authConfig = {
-  adapter: PrismaAdapter(prisma as unknown as AdapterPrismaClient),
+  adapter: {
+    ...prismaAdapter,
+    async deleteSession(sessionToken) {
+      try {
+        return (await prismaAdapter.deleteSession?.(sessionToken)) ?? null;
+      } catch (error) {
+        // A browser can keep a cookie after its database session has expired or been removed.
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2025") return null;
+        throw error;
+      }
+    },
+  },
   providers: [
     smtpServer
       ? Nodemailer({ server: smtpServer, from: emailFrom })
@@ -45,6 +58,9 @@ export const authConfig = {
     },
   },
   events: {
+    async signIn({ user }) {
+      if (user.id) await clearStaleWorkspaceSelection(user.id);
+    },
     async createUser({ user }) {
       if (user.id) {
         await ensureWorkspaceForUser(user.id, user.email);

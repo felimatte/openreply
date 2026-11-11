@@ -5,6 +5,8 @@ import { notFound } from "next/navigation";
 import InvitationAcceptCard from "@/components/invitation-accept-card";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
+import { normalizeInvitationEmail } from "@/lib/workspace-invitations";
+import { findWorkspaceMembership } from "@/lib/workspace-selection";
 
 type InvitePageProps = {
   params: Promise<{ token: string }>;
@@ -31,11 +33,18 @@ export default async function InvitePage({ params }: InvitePageProps) {
     }),
   ]);
 
-  if (!invitation || invitation.status !== "PENDING") {
+  if (!invitation || (invitation.status !== "PENDING" && invitation.status !== "ACCEPTED")) {
     notFound();
   }
 
-  const expired = invitation.expiresAt <= new Date();
+  const userId = session?.user?.id;
+  const signedInEmail = session?.user?.email;
+  const matchingSession = Boolean(userId && signedInEmail && normalizeInvitationEmail(signedInEmail) === invitation.email);
+  const accepted = invitation.status === "ACCEPTED";
+  if (accepted && (!matchingSession || !userId || !await findWorkspaceMembership(userId, invitation.workspaceId))) {
+    notFound();
+  }
+  const expired = !accepted && invitation.expiresAt <= new Date();
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -61,7 +70,8 @@ export default async function InvitePage({ params }: InvitePageProps) {
             ) : (
               <InvitationAcceptCard
                 token={token}
-                isSignedIn={Boolean(session?.user?.id)}
+                matchingSession={matchingSession}
+                accepted={accepted}
                 invitedEmail={invitation.email}
               />
             )}

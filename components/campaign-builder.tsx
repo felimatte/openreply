@@ -18,6 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
+import { accountScopedHref, initialCampaignAccount } from "@/components/workspace-navigation";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
 import FlowBuilder, { type FlowBuilderHandle } from "@/components/flow-builder";
@@ -85,6 +86,7 @@ interface LoadedCampaign {
 interface CampaignBuilderProps {
   mode: "new" | "edit";
   campaignId?: string;
+  requestedAccountId?: string;
 }
 
 function Section({
@@ -162,9 +164,10 @@ function Toggle({
   );
 }
 
-export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderProps) {
+export default function CampaignBuilder({ mode, campaignId, requestedAccountId }: CampaignBuilderProps) {
   const { t } = useI18n();
   const router = useRouter();
+  const campaignsHref = accountScopedHref("/campaigns", requestedAccountId ?? null);
 
   const [loading, setLoading] = useState(mode === "edit");
   const [notFound, setNotFound] = useState(false);
@@ -296,13 +299,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         if (!payload.success) return;
         const next: AccountOption[] = payload.data.instagramAccounts ?? [];
         setAccounts(next);
-        setSelectedAccountId(
-          (prev) => prev || payload.data.selectedInstagramAccountId || next[0]?.id || ""
-        );
+        setSelectedAccountId((prev) => prev || initialCampaignAccount(next, requestedAccountId, payload.data.selectedInstagramAccountId));
       })
       .catch(() => setAccounts([]))
       .finally(() => setAccountsLoading(false));
-  }, []);
+  }, [requestedAccountId]);
 
   // Existing tags and custom fields, offered as suggestions.
   useEffect(() => {
@@ -651,7 +652,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         }
         // refresh() busts the router cache so the list reflects the save
         // instead of landing on a stale (empty) campaigns page.
-        router.push(creatingFlow && !importQueue ? `/campaigns/${data.data.id}/flow` : "/campaigns");
+        router.push(creatingFlow && !importQueue
+          ? accountScopedHref(`/campaigns/${data.data.id}/flow`, selectedAccountId)
+          : accountScopedHref("/campaigns", selectedAccountId));
         router.refresh();
       } else {
         // Surface the specific field that failed validation instead of a
@@ -699,7 +702,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     } catch {
       // ignore
     }
-    router.push("/campaigns");
+    router.push(campaignsHref);
     router.refresh();
   }
 
@@ -719,7 +722,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       <div className="panel rounded p-8 text-center">
         <p className="text-sm text-muted">{t("Campaign not found.")}</p>
         <button
-          onClick={() => router.push("/campaigns")}
+          onClick={() => router.push(campaignsHref)}
           className="mt-4 rounded border border-border px-4 py-2 text-sm text-muted hover:text-foreground"
         >
           {t("Back to campaigns")}
@@ -847,8 +850,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
             maxLength={100}
           />
-          {creatingFlow && accounts.length <= 1 && <div id="campaign-account" className="campaign-account-status">{accountsLoading ? "Cargando tu cuenta…" : selectedAccountId ? <><FlowIcon name="check" size={14} /><span>Cuenta conectada: <strong>@{username}</strong></span></> : <Link href="/settings">Conectar una cuenta de Instagram ↗</Link>}</div>}
-          {accounts.length > 1 && (
+          {creatingFlow && (accounts.length === 0 || (accounts.length === 1 && selectedAccountId)) && <div id="campaign-account" className="campaign-account-status">{accountsLoading ? "Cargando tu cuenta…" : selectedAccountId ? <><FlowIcon name="check" size={14} /><span>Cuenta conectada: <strong>@{username}</strong></span></> : <Link href="/settings">Conectar una cuenta de Instagram ↗</Link>}</div>}
+          {(accounts.length > 1 || (accounts.length === 1 && !selectedAccountId)) && (
             <div id="campaign-account" className="pt-2">
               <AccountSelect
                 accounts={accounts}
