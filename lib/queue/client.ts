@@ -24,6 +24,8 @@ export type CommentSource = "WEBHOOK" | "POLLING";
 
 export interface ProcessCommentJob {
   timestamp?: number;
+  /** Internal early-webhook replay is allowed to run only this selected campaign. */
+  targetScheduledAutomationId?: string;
   accountConnectionId?: string;
   instagramAccountId: string;
   commentId: string;

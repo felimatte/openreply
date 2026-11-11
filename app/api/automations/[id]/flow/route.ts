@@ -19,7 +19,7 @@ async function resolve(context: Context, write = false) {
     where: { id, workspaceId: user.workspaceId },
     include: { instagramAccount: { select: { id: true, username: true, provider: true } }, trackedLinks: { orderBy: { position: "asc" } } },
   });
-  if (!campaign) return { error: failure("Campaña no encontrada.", 404) };
+  if (!campaign || campaign.id.startsWith("musa_flow_scheduled_")) return { error: failure("Campaña no encontrada.", 404) };
   return { user, campaign };
 }
 
@@ -38,7 +38,7 @@ export async function GET(_request: NextRequest, context: Context) {
     ? await prisma.flowVersion.findFirst({ where: { id: campaign.flowPublishedVersionId, automationId: campaign.id, workspaceId: user.workspaceId } }) : null;
   const parsedDraft = flowDefinitionSchema.safeParse(campaign.flowDraft);
   return NextResponse.json({ success: true, data: {
-    campaign: { id: campaign.id, name: campaign.name, isActive: campaign.isActive, pendingNextReel: campaign.pendingNextReel, nextReelArmedAt: campaign.nextReelArmedAt, postId: campaign.postId, matchAnyPost: campaign.matchAnyPost, keywords: campaign.keywords, excludedKeywords: campaign.excludedKeywords, priority: campaign.priority, flowEnabled: campaign.flowEnabled, instagramAccount: campaign.instagramAccount },
+    campaign: { id: campaign.id, name: campaign.name, instagramAccountId: campaign.instagramAccountId, scheduledReel: Boolean(campaign.musaScheduledPublicationId), isActive: campaign.isActive, pendingNextReel: campaign.pendingNextReel, nextReelArmedAt: campaign.nextReelArmedAt, postId: campaign.postId, matchAnyPost: campaign.matchAnyPost, keywords: campaign.keywords, excludedKeywords: campaign.excludedKeywords, priority: campaign.priority, flowEnabled: campaign.flowEnabled, instagramAccount: campaign.instagramAccount },
     draft: { definition: parsedDraft.success ? parsedDraft.data : publishedVersion?.definition ?? createDefaultFlow(campaign), revision: campaign.flowDraftRevision },
     publishedVersion, versions: versions.map(({ id, version, createdAt, publishedAt }) => ({ id, version, createdAt, publishedAt })),
     runs, summary: summary.map((row) => ({ status: row.status, count: row._count._all })),
@@ -76,6 +76,8 @@ export async function POST(request: NextRequest, context: Context) {
   const { campaign, user } = resolved;
   const body = await readBody(request);
   if (!body) return failure("La solicitud no es válida.", 400);
+  if (campaign.musaScheduledPublicationId && (body.action === "publish" || body.action === "disable"))
+    return failure("Publicá o pausá esta automatización desde su configuración de Reel de MUSA.", 409);
   if (body.action === "disable") {
     await prisma.$transaction([
       prisma.automation.update({ where: { id: campaign.id }, data: { flowEnabled: false } }),

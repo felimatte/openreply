@@ -573,7 +573,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   const requeueAttempt = job.data.requeueAttempt ?? 0;
 
   // Resolve the next-Reel binding before matching its first comment.
-  const pendingReel = await prisma.automation.findFirst({ where: {
+  const pendingReel = job.data.targetScheduledAutomationId ? null : await prisma.automation.findFirst({ where: {
     ...connectionScope(job.data), pendingNextReel: true, isActive: true,
     instagramAccount: { instagramId: instagramAccountId },
   }, select: { pendingNextReel: true } });
@@ -618,6 +618,19 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   // Published flows arbitrate one winner before any public or private reply.
   // Existing accounts that only use legacy campaigns retain their behavior.
   const automations = matching.some((automation) => automation.flowEnabled) ? matching.slice(0, 1) : matching;
+  const replayTarget = job.data.targetScheduledAutomationId;
+  if (replayTarget) {
+    const winner = automations[0];
+    if (winner?.id !== replayTarget || !winner.flowEnabled || !winner.musaScheduledPublicationId || !winner.postId) return;
+    const other = { instagramAccountId: winner.instagramAccountId, commentId, automationId: { not: replayTarget } };
+    const [priorLog, priorRun] = await Promise.all([
+      prisma.dmLog.findFirst({ where: { ...other, OR: [{ status: { in: ["PENDING", "SENT"] } },
+        { dmDeliveryUnconfirmed: true }, { publicReplySentAt: { not: null } }, { publicReplyDeliveryUnconfirmed: true }] },
+        select: { id: true } }),
+      prisma.flowRun.findFirst({ where: other, select: { id: true } }),
+    ]);
+    if (priorLog || priorRun) return;
+  }
 
   for (const automation of automations) {
     // "Any word" campaigns fire on every comment; otherwise require a keyword hit.

@@ -6,6 +6,7 @@ import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { replayPendingReelComments } from "@/lib/automation/pending-comments";
 import { createFlowWorker } from "@/lib/flows/queue";
 import { recoverFlowRuns } from "@/lib/flows/engine";
+import { replayMusaScheduledComments } from "@/lib/integrations/musa/scheduled-reel-comments";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -58,12 +59,18 @@ const pollTimer = setInterval(() => void poll(), POLL_INTERVAL_MS);
 // them also repairs a queue outage or a restart between commit and enqueue.
 const flowRecoveryTimer = setInterval(() => void recoverFlowRuns().catch((error) => console.error("[Flows] Recovery failed:", error instanceof Error ? error.message : "Unknown error")), 30_000);
 void recoverFlowRuns().catch(() => {});
+const replayEarlyComments = () => void replayMusaScheduledComments().catch(() => {
+  console.warn("[MUSA] Early Reel comment reconciliation is temporarily unavailable.");
+});
+const commentReplayTimer = setInterval(replayEarlyComments, 30_000);
+replayEarlyComments();
 
 async function shutdown(signal: string) {
   console.log(`[DM Worker] ${signal} received, closing worker`);
   clearInterval(heartbeatTimer);
   clearInterval(pollTimer);
   clearInterval(flowRecoveryTimer);
+  clearInterval(commentReplayTimer);
   await Promise.all([worker.close(), contactSyncWorker.close(), flowWorker.close()]);
   process.exit(0);
 }

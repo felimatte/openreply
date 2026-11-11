@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const contextMock = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: contextMock }));
 import { getMusaPublishingCapability } from "@/lib/integrations/musa/publications-capabilities";
-import { createMetaContainer, createMetaCarouselChild, createMetaCarouselContainer, createZernioPublication, metaContainerStatus, publicationProviderRequest, readZernioPublication } from "@/lib/integrations/musa/publications-provider";
+import { createMetaContainer, createMetaCarouselChild, createMetaCarouselContainer, createZernioPublication, metaContainerStatus, publicationProviderRequest, publishMetaContainer, readZernioPublication } from "@/lib/integrations/musa/publications-provider";
 
 const fetchMock = vi.fn();
 const meta = { provider: "META" as const, accessToken: "test-token-never-real" };
@@ -275,15 +275,16 @@ describe("exact Meta container confirmation", () => {
       code: "PROVIDER_INVALID_RESPONSE", ambiguous: false,
     });
   });
-  it("keeps the same deadline while reading the response body", async () => {
+  it("keeps the seven-second publish deadline while reading the response body", async () => {
     const controller = new AbortController();
-    vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
     let reading!: () => void;
     const started = new Promise<void>(resolve => { reading = resolve; });
     fetchMock.mockResolvedValue({ ok: true, json: () => { reading(); return new Promise(() => {}); } });
-    const request = publicationProviderRequest(meta, "/ig-a/media_publish", { method: "POST" });
+    const request = publishMetaContainer(meta, "ig-a", "container-a");
     await started;
     controller.abort(new DOMException("private body timeout", "TimeoutError"));
     await expect(request).rejects.toMatchObject({ code: "PROVIDER_UNREACHABLE", ambiguous: true });
+    expect(timeout).toHaveBeenCalledExactlyOnceWith(7000);
   });
 });

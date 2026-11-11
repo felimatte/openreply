@@ -120,6 +120,9 @@ model MusaConnection {
   discoveryFlows    MusaDiscoveryFlow[]
   discoveryGrants   MusaDiscoveryGrant[]
 
+  schedulerGrants MusaSchedulerGrant[]
+  scheduledReels MusaScheduledReel[]
+
   @@index([workspaceId, revokedAt])
   @@index([grantedByUserId])
   @@index([businessId])
@@ -175,6 +178,7 @@ model WorkspaceInvitation {
   @@index([email])
   @@index([workspaceId])
   @@index([status])
+  @@index([createdAt, id])
 }
 
 model InstagramAccount {
@@ -199,6 +203,8 @@ model InstagramAccount {
   flowRuns          FlowRun[]
   discoveryFlows    MusaDiscoveryFlow[]
   discoveryGrants   MusaDiscoveryGrant[]
+
+  musaSchedulerGrants MusaSchedulerGrant[]
 
   @@index([workspaceId])
 }
@@ -343,6 +349,12 @@ model Automation {
   contactQuestions ContactQuestion[]
   flowVersions     FlowVersion[]
   flowRuns         FlowRun[]
+
+  musaScheduledPublicationId String? @db.Uuid
+  musaScheduledRequestId String? @db.Uuid
+  scheduledReels MusaScheduledReel[]
+
+  @@unique([workspaceId, musaScheduledRequestId])
 
   @@index([workspaceId])
   @@index([instagramAccountId])
@@ -851,4 +863,45 @@ model MusaPublication {
   @@unique([connectionId, publicationId])
   @@index([workspaceId, accountId])
   @@index([status, leaseUntil])
+}
+
+model MusaSchedulerGrant {
+  connectionId   String
+  accountId      String
+  instagramId    String
+  encryptedToken String
+  updatedAt      DateTime @default(now()) @updatedAt
+  connection     MusaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  account        InstagramAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@id([connectionId, accountId])
+  @@index([accountId])
+}
+
+model MusaScheduledReel {
+  requestId       String @id @db.Uuid
+  automationId    String
+  connectionId    String
+  accountId       String
+  publicationId   String @db.Uuid
+  reservationId   String? @unique @db.Uuid
+  flowVersionId   String
+  rootCampaignId  String
+  flowCampaignIds String[]
+  status          String @default("reserving")
+  errorCode       String?
+  mediaId         String?
+  activatedAt     DateTime?
+  replayDueAt     DateTime?
+  replayUntil     DateTime?
+  replayCursorId  String?
+  replayCursorAt  DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now()) @updatedAt
+  automation      Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
+  connection      MusaConnection @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+
+  @@index([automationId, createdAt])
+  @@index([connectionId, publicationId])
+  @@index([replayDueAt])
 }
