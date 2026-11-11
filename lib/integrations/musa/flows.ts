@@ -70,7 +70,7 @@ async function loadPublicationFlowBundle(tx: Prisma.TransactionClient, context: 
 
 /** Copy the complete chain under the same transaction as its publication UUID. */
 export async function copyMusaPublicationFlow(tx: Prisma.TransactionClient, context: MusaConnectionContext,
-  accountId: string, flowId: string, revision: string) {
+  accountId: string, flowId: string, revision: string, story = false) {
   requireMusaAccount(context, accountId);
   const bundle = await loadPublicationFlowBundle(tx, context, accountId, flowId);
   if (musaFlowRevision(bundle.root, bundle.sources) !== revision)
@@ -82,7 +82,9 @@ export async function copyMusaPublicationFlow(tx: Prisma.TransactionClient, cont
     const graph = sourceGraph(source)!;
     const remapped = { ...graph, nodes: graph.nodes.map(node => node.type === "action" && node.data.action === "start_flow"
       ? { ...node, data: { ...node.data, automationId: ids.get(node.data.automationId!)!.campaign } } : node) };
-    return { ...settings(source.automation), id: target.campaign, name: source.automation.name,
+    return { ...settings(source.automation),
+      ...(story ? { publicReplyEnabled: false, publicReplyMessage: null, publicReplyMessages: [] } : {}),
+      id: target.campaign, name: source.automation.name,
       workspaceId: context.workspaceId, instagramAccountId: accountId, createdAt: now, updatedAt: now,
       isActive: false, postId: null, postUrl: null, pendingNextReel: false, nextReelArmedAt: null,
       matchAnyPost: false, dmTriggerEnabled: false, reportShareSlug: generateReportShareSlug(), reportShareEnabled: false,

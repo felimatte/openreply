@@ -68,6 +68,7 @@ import { startFlowRun, handleFlowMessage, handleFlowPostback } from "@/lib/flows
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
 import { deferPendingReelComment } from "@/lib/automation/pending-comments";
 import { messagingWindowOpen } from "@/lib/flows/runtime-values";
+import { routeMusaStoryReply } from "@/lib/integrations/musa/story-replies";
 
 const BACKOFF_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 45 * 60 * 1000];
 
@@ -1733,6 +1734,23 @@ async function continueAfterQuestion(
   await scheduleFollowUp(automation, senderId, contact.username);
 }
 
+// A Story can receive a reply while MUSA is still polling for its media ID.
+const STORY_RETRY_DELAYS = [15_000, 30_000, 60_000, 120_000, 180_000, 180_000];
+async function processStoryReply(data: ProcessMessageJob): Promise<boolean> {
+  if (!data.timestamp) return false;
+  const attempt = data.storyRetry ?? 0;
+  const delay = STORY_RETRY_DELAYS[attempt];
+  const retryUntil = new Date(delay ? data.timestamp + 10 * 60_000 : 0);
+  const result = await routeMusaStoryReply(data, retryUntil);
+  if (result === "pending") {
+    const messageId = Buffer.from(data.messageId).toString("base64url");
+    await getDMQueue().add(MESSAGE_JOB_NAME, { ...data, storyRetry: attempt + 1 }, {
+      delay, jobId: `story_reply_${data.instagramAccountId}_${messageId}_${attempt + 1}`,
+    });
+  }
+  return result !== "unmatched";
+}
+
 /**
  * Reply to an inbound DM whose text matches a campaign's keywords.
  *
@@ -1746,7 +1764,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
 
   const flowCampaign = await prisma.automation.findFirst({ where: { ...connectionScope(job.data), flowEnabled: true,
     instagramAccount: { instagramId: instagramAccountId } }, select: { flowEnabled: true } });
-  if (flowCampaign?.flowEnabled && await handleFlowMessage({ instagramAccountId, userId: senderId, messageId,
+  if ((flowCampaign?.flowEnabled || job.data.storyId) && await handleFlowMessage({ instagramAccountId, userId: senderId, messageId,
     text: messageText, quickReplyPayload: job.data.quickReplyPayload, timestamp: job.data.timestamp })) return;
 
   // Whoever messages the account is a contact, and their DM opens Instagram's
@@ -1756,6 +1774,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const contact = await trackMessageSender(job.data);
   if (pausedContact(contact)) return;
   if (contact && (await answerOpenQuestion(job, contact))) return;
+  if (job.data.storyId && await processStoryReply(job.data)) return;
 
   const automations = await prisma.automation.findMany({
     where: {

@@ -382,6 +382,16 @@ describe("parseCommentEvents", () => {
 });
 
 describe("parseMessageEvents", () => {
+  it("preserves the native story ID from an inbound story reply without storing its URL", () => {
+    const payload = messagingPayload([
+      { sender: { id: "user_999" }, message: { mid: "mid_story", text: "link",
+        reply_to: { story: { id: "story_1" } } } },
+      { sender: { id: "user_999" }, message: { mid: "mid_generic", text: "link" } },
+    ]);
+    const events = parseMessageEvents(payload);
+    expect(events[0]).toMatchObject({ messageId: "mid_story", storyId: "story_1" });
+    expect(events[1]).not.toHaveProperty("storyId");
+  });
   function messagingPayload(messaging: unknown[]) {
     return {
       object: "instagram",

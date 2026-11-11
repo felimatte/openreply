@@ -80,7 +80,7 @@ async function reconcileMusaPublication(context: MusaConnectionContext, row: Mus
   try {
     if (row.stage === "FINALIZE" && row.mediaId) {
       let permalink = row.permalink;
-      if (!permalink && row.provider === "META") {
+      if (!permalink && row.provider === "META" && publicationFormat(musaPublicationInputSchema.parse(row.payload)) !== "story") {
         try {
           const provider = await createInstagramContext(requireMusaAccount(context, row.accountId));
           permalink = await metaMediaPermalink(provider, row.mediaId);
@@ -118,7 +118,8 @@ async function ensurePublication(context: MusaConnectionContext, publicationId: 
         let flowCampaignIds: string[] = [];
         if (payload.flowId && payload.flowRevision) {
           try {
-            const copy = await copyMusaPublicationFlow(tx, context, account.id, payload.flowId, payload.flowRevision);
+            const copy = await copyMusaPublicationFlow(tx, context, account.id, payload.flowId, payload.flowRevision,
+              publicationFormat(payload) === "story");
             campaignId = copy.id;
             campaignUpdatedAt = copy.updatedAt;
             flowCampaignIds = copy.flowCampaignIds;
@@ -169,6 +170,7 @@ async function assertCampaignUnchanged(row: MusaPublication) {
 
 async function finishPublication(row: MusaPublication, leaseToken: string, permalink: string | null) {
   const payload = musaPublicationInputSchema.parse(row.payload);
+  const story = publicationFormat(payload) === "story";
   return prisma.$transaction(async (tx) => {
     let bundleReady = true;
     if (row.flowCampaignIds.length) {
@@ -176,7 +178,7 @@ async function finishPublication(row: MusaPublication, leaseToken: string, perma
       const copies = await tx.automation.findMany({ where: { id: { in: row.flowCampaignIds }, workspaceId: row.workspaceId,
         instagramAccountId: row.accountId, isActive: false, flowEnabled: false, postId: null,
         matchAnyPost: false, dmTriggerEnabled: false, flowPublishedVersionId: { not: null } }, select: { id: true } });
-      bundleReady = copies.length === row.flowCampaignIds.length;
+      bundleReady = Boolean(row.mediaId) && copies.length === row.flowCampaignIds.length;
     }
     const saved = await tx.musaPublication.updateMany({ where: { id: row.id, leaseToken }, data: {
       status: "published", stage: "DONE", permalink, publishedAt: new Date(), errorCode: bundleReady ? null : "CAMPAIGN_BINDING_CONFLICT", confirmationContainerId: null, nextAttemptAt: null,
@@ -187,7 +189,7 @@ async function finishPublication(row: MusaPublication, leaseToken: string, perma
         id: row.campaignId, workspaceId: row.workspaceId, instagramAccountId: row.accountId,
         updatedAt: row.campaignUpdatedAt ?? undefined,
         isActive: false, postId: null, matchAnyPost: false, dmTriggerEnabled: false,
-      }, data: { postId: row.mediaId, postUrl: permalink, pendingNextReel: false, nextReelArmedAt: null,
+      }, data: { postId: story ? null : row.mediaId, postUrl: permalink, pendingNextReel: false, nextReelArmedAt: null,
         ...(payload.flowId && payload.activateOnPublish && !row.flowCampaignIds.length ? { isActive: true, flowEnabled: true } : {}) } });
       if (!bound.count) await tx.musaPublication.updateMany({ where: { id: row.id, leaseToken },
         data: { errorCode: "CAMPAIGN_BINDING_CONFLICT" } });
@@ -200,7 +202,11 @@ async function finishPublication(row: MusaPublication, leaseToken: string, perma
   }, transactionOptions);
 }
 
-/** One provider operation per call; MUSA durably schedules the next PUT. */
+function isPublishedStoryId(mediaId: string, containerOrPostId: string) {
+  return mediaId !== containerOrPostId && /^[a-zA-Z0-9_-]{1,128}$/.test(mediaId);
+}
+
+/** Provider writes advance one durable step at a time. */
 export async function advanceMusaPublication(context: MusaConnectionContext, publicationId: string, input: MusaPublicationInput) {
   const row = await ensurePublication(context, publicationId, input);
   const account = requireMusaAccount(context, row.accountId);
@@ -224,15 +230,18 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
   });
   try {
     const payload = musaPublicationInputSchema.parse(current.payload);
+    const story = publicationFormat(payload) === "story";
     if (["META_CREATING", "META_CHILD_CREATING", "META_PUBLISHING"].includes(current.stage)) {
       // A worker died after the write-ahead marker. Never repeat that POST.
       await save({ status: "uncertain", errorCode: "PUBLICATION_CONFIRMATION_REQUIRED" });
     } else if (current.stage === "PREPARE") {
       await assertCampaignUnchanged(current);
-      const capability = await getMusaPublishingCapability(account);
+      const capability = await getMusaPublishingCapability(account, story && Boolean(payload.flowId));
       if (!capability.canPublish) throw new MusaProviderError(capability.publishUnavailableReason ?? "PUBLISH_PERMISSION_REQUIRED");
       if (!(capability.supportedFormats ?? ["reel"]).includes(publicationFormat(payload)))
         throw new MusaProviderError("FORMAT_UNAVAILABLE");
+      if (story && payload.flowId && capability.canAttachStoryFlowOnPublish !== true)
+        throw new MusaProviderError("STORY_FLOW_UNAVAILABLE");
       await save({ stage: "READY", nextAttemptAt: null });
     } else {
       const provider = await createInstagramContext(account);
@@ -258,7 +267,10 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
         await assertCampaignUnchanged(current);
         await save({ stage: "META_PUBLISHING", attemptStartedAt: new Date() });
         const mediaId = await publishMetaContainer(provider, account.instagramId, current.containerId);
+        if (story && !isPublishedStoryId(mediaId, current.containerId))
+          throw new MusaProviderError("PUBLICATION_ID_UNAVAILABLE", true);
         await save({ stage: "FINALIZE", mediaId, nextAttemptAt: null });
+        if (story) await finishPublication(current, leaseToken, null);
       } else if ((current.stage === "READY" || current.stage === "ZERNIO_CREATING") && provider.provider === "ZERNIO") {
         await assertCampaignUnchanged(current);
         if (current.attemptStartedAt && Date.now() - current.attemptStartedAt.getTime() >= 23 * 3600_000) {
@@ -277,13 +289,17 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
         const result = readZernioPublication(await getZernioPublication(provider, current.providerPostId), provider.accountId);
         if (result.postId !== current.providerPostId) throw new MusaProviderError("PROVIDER_ACCOUNT_MISMATCH");
         if (result.status === "published") {
-          if (!result.mediaId) await save({ status: "uncertain", errorCode: "PUBLICATION_ID_UNAVAILABLE" });
-          else await save({ stage: "FINALIZE", mediaId: result.mediaId, permalink: result.permalink, nextAttemptAt: null });
+          if (!result.mediaId || story && !isPublishedStoryId(result.mediaId, result.postId)) {
+            await save({ status: "uncertain", errorCode: "PUBLICATION_ID_UNAVAILABLE" });
+          } else {
+            await save({ stage: "FINALIZE", mediaId: result.mediaId, permalink: result.permalink, nextAttemptAt: null });
+            if (story) await finishPublication(current, leaseToken, result.permalink);
+          }
         } else if (["failed", "cancelled"].includes(result.status)) throw new MusaProviderError("PROVIDER_PUBLICATION_FAILED");
         else await wait(30);
       } else if (current.stage === "FINALIZE" && current.mediaId) {
         let permalink = current.permalink;
-        if (!permalink && provider.provider === "META") permalink = await metaMediaPermalink(provider, current.mediaId).catch(() => null);
+        if (!story && !permalink && provider.provider === "META") permalink = await metaMediaPermalink(provider, current.mediaId).catch(() => null);
         await finishPublication(current, leaseToken, permalink);
       } else throw new MusaProviderError("PUBLICATION_STATE_INVALID", true);
     }

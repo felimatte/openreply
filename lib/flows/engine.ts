@@ -68,7 +68,11 @@ async function withContactLock<T>(contactId: string, task: (assertLease: () => P
 export interface StartFlowInput {
   automationId: string; versionId?: string; instagramAccountId: string; contactId: string;
   commentId: string; commentText: string; commenterId: string; commenterName?: string; mediaId?: string; timestamp?: number;
-  depth?: number; conversationOpen?: boolean;
+  depth?: number; conversationOpen?: boolean; inboundEvent?: { instagramId: string; messageId: string };
+}
+
+function inboundReceiptId(instagramId: string, eventId: string) {
+  return createHash("sha256").update(`flow-inbound:${instagramId}:${eventId}`).digest("hex");
 }
 
 export async function startFlowRun(input: StartFlowInput): Promise<FlowRun | null> {
@@ -86,13 +90,20 @@ export async function startFlowRun(input: StartFlowInput): Promise<FlowRun | nul
     const existingReply = input.conversationOpen ? null : await prisma.dmLog.findFirst({ where: { instagramAccountId: input.instagramAccountId, commentId: input.commentId, OR: [{ status: "SENT" }, { dmDeliveryUnconfirmed: true }] } });
     if (existingReply) return null;
     try {
-      run = await prisma.flowRun.create({ data: {
+      const data: Prisma.FlowRunUncheckedCreateInput = {
         workspaceId: automation.workspaceId, automationId: automation.id, versionId, contactId: contact.id,
         instagramAccountId: input.instagramAccountId, commentId: input.commentId, currentNodeId: definition.entryNodeId,
         context: json({ commenterId: input.commenterId, commenterName: input.commenterName, commentText: input.commentText, mediaId: input.mediaId,
           commentTimestamp: input.timestamp ? incomingEventTime(input.timestamp) : undefined, depth: input.depth ?? 0, initialSent: input.conversationOpen ?? false, visits: {}, totalSteps: 0,
-          publicReplies: automation.publicReplyEnabled ? (automation.publicReplyMessages.length ? automation.publicReplyMessages : automation.publicReplyMessage ? [automation.publicReplyMessage] : []) : [] }),
-      } });
+          publicReplies: !input.conversationOpen && automation.publicReplyEnabled ? (automation.publicReplyMessages.length ? automation.publicReplyMessages : automation.publicReplyMessage ? [automation.publicReplyMessage] : []) : [] }),
+      };
+      if (input.inboundEvent) {
+        const receipt = inboundReceiptId(input.inboundEvent.instagramId, input.inboundEvent.messageId);
+        [run] = await prisma.$transaction([
+          prisma.flowRun.create({ data }),
+          prisma.flowEventReceipt.create({ data: { id: receipt } }),
+        ]);
+      } else run = await prisma.flowRun.create({ data });
     } catch (error) {
       if (!uniqueError(error)) throw error;
       run = await prisma.flowRun.findUnique({ where: { automationId_commentId: { automationId: automation.id, commentId: input.commentId } } });
@@ -485,7 +496,7 @@ export async function executeFlowRun(runId: string): Promise<void> {
 
 type Inbound = { instagramAccountId: string; userId: string; eventId: string; text?: string; payload?: string; timestamp?: number };
 async function handleInbound(input: Inbound): Promise<boolean> {
-  const receipt = createHash("sha256").update(`flow-inbound:${input.instagramAccountId}:${input.eventId}`).digest("hex");
+  const receipt = inboundReceiptId(input.instagramAccountId, input.eventId);
   if (await prisma.flowEventReceipt.findUnique({ where: { id: receipt } })) return true;
   const reference = input.payload ? parseFlowButtonPayload(input.payload) : null;
   if (input.payload?.startsWith("flow.") && !reference) return true;

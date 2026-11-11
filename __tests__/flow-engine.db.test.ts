@@ -1,7 +1,7 @@
 /** Opt-in persistence checks. TEST_DATABASE_URL points to a disposable
  * Postgres; every execution uses and drops its own schema. Providers and the
  * queue are simulated, so this suite never contacts Instagram or webhooks. */
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { Client } from "pg";
@@ -44,6 +44,7 @@ vi.mock("@/lib/billing/usage", () => ({ reserveWorkspaceDMSend: async () => ({ a
 vi.mock("@/lib/utils/rate-limiter", () => ({ reserveDMSlot: async () => ({ allowed: true, reserved: false }), releaseDMSlot: vi.fn() }));
 
 import { executeFlowRun, handleFlowMessage, resumeContactFlows, startFlowRun } from "@/lib/flows/engine";
+import { routeMusaStoryReply } from "@/lib/integrations/musa/story-replies";
 
 const node = <T extends FlowNode["type"]>(id: string, type: T, data: Extract<FlowNode, { type: T }>["data"]): FlowNode => ({ id, type, data, label: id, position: { x: 0, y: 0 } }) as FlowNode;
 const message = (id: string, text: string) => node(id, "message", { blocks: [{ type: "text", text }], buttons: [] });
@@ -51,10 +52,10 @@ function graph(middle: FlowNode[] = [message("resource", "Tu recurso")]): FlowDe
   const nodes = [node("start", "start", {}), message("opening", "Respondé SI"), ...middle, node("end", "end", {})];
   return { schemaVersion: 1, entryNodeId: "start", nodes, edges: nodes.slice(0, -1).map((source, index) => ({ id: `e_${index}`, source: source.id, target: nodes[index + 1].id, sourceHandle: source.type === "input" ? "answered" : "next" })) };
 }
-async function publish(definition = graph(), publicReplyEnabled = false) {
-  await state.db.automation.create({ data: { id: "flow_campaign", workspaceId: "flow_workspace", instagramAccountId: "flow_account", name: "Integration", keywords: ["GUIA"], dmMessage: "legacy", flowEnabled: true, publicReplyEnabled, publicReplyMessages: ["Te escribí, {username}."] } });
-  await state.db.flowVersion.create({ data: { id: "flow_version", workspaceId: "flow_workspace", automationId: "flow_campaign", version: 1, definition: definition as unknown as Prisma.InputJsonValue, publishedAt: new Date() } });
-  await state.db.automation.update({ where: { id: "flow_campaign" }, data: { flowPublishedVersionId: "flow_version" } });
+async function publish(definition = graph(), publicReplyEnabled = false, campaignId = "flow_campaign") {
+  await state.db.automation.create({ data: { id: campaignId, workspaceId: "flow_workspace", instagramAccountId: "flow_account", name: "Integration", keywords: ["GUIA"], dmMessage: "legacy", flowEnabled: true, publicReplyEnabled, publicReplyMessages: ["Te escribí, {username}."] } });
+  await state.db.flowVersion.create({ data: { id: "flow_version", workspaceId: "flow_workspace", automationId: campaignId, version: 1, definition: definition as unknown as Prisma.InputJsonValue, publishedAt: new Date() } });
+  await state.db.automation.update({ where: { id: campaignId }, data: { flowPublishedVersionId: "flow_version" } });
 }
 const startInput = () => ({ automationId: "flow_campaign", instagramAccountId: "flow_account", contactId: "flow_contact", commentId: "flow_comment", commentText: "GUIA", commenterId: "flow_person", commenterName: "ana", mediaId: "flow_reel", timestamp: Date.now() });
 async function start(definition = graph(), publicEnabled = false) {
@@ -89,6 +90,7 @@ describe.skipIf(!databaseUrl)("flow persistence on real Postgres", () => {
     state.sendPublic.mockReset().mockResolvedValue({ id: "flow_reply" });
     state.enqueue.mockResolvedValue(undefined);
     await state.db.flowEventReceipt.deleteMany();
+    await state.db.musaPublication.deleteMany();
     await state.db.user.deleteMany();
     await state.db.user.create({ data: { id: "flow_user", email: "flow@example.test" } });
     await state.db.workspace.create({ data: { id: "flow_workspace", name: "Flows test", ownerId: "flow_user" } });
@@ -108,6 +110,46 @@ describe.skipIf(!databaseUrl)("flow persistence on real Postgres", () => {
     await answer(first!.id);
     expect((await state.db.flowRun.findUniqueOrThrow({ where: { id: first!.id } })).status).toBe("COMPLETED");
     expect(state.sendPublic).toHaveBeenCalledTimes(1); expect(state.sendText).toHaveBeenCalledTimes(2);
+  });
+
+  it("routes only the exact story reply, keeps early replies pending and deduplicates starts and continuations", async () => {
+    const definition = graph();
+    const opening = definition.nodes.find(node => node.id === "opening");
+    if (opening?.type !== "message") throw new Error("Missing opening fixture");
+    opening.data.buttons = [{ id: "continue", label: "GUIA", kind: "continue" }];
+    definition.edges.find(edge => edge.source === "opening")!.sourceHandle = "button.continue";
+    const campaignId = `musa_flow_${randomUUID()}`;
+    await publish(definition, true, campaignId);
+    const record = await state.db.musaPublication.create({ data: {
+      workspaceId: "flow_workspace", connectionId: "test-grant", accountId: "flow_account", publicationId: randomUUID(),
+      provider: "META", campaignId, flowCampaignIds: [campaignId], payloadHash: "fixture",
+      payload: { format: "story" }, stage: "META_PUBLISHING", attemptStartedAt: new Date(Date.now() - 5000),
+    } });
+    const data = { storyId: "story-a", storyWorkspaceId: "flow_workspace", accountConnectionId: "flow_account",
+      instagramAccountId: "flow_ig", messageId: "story-mid", messageText: "GUIA", senderId: "flow_person", timestamp: Date.now() - 1000 };
+    const retryUntil = new Date(Date.now() + 60_000);
+    expect(await routeMusaStoryReply(data, retryUntil)).toBe("pending");
+    expect(await state.db.flowRun.count()).toBe(0);
+    await state.db.musaPublication.update({ where: { id: record.id }, data: { status: "published", stage: "DONE", mediaId: data.storyId } });
+    for (const input of [{ storyId: "another-story" }, { storyId: undefined }, { storyWorkspaceId: "foreign-workspace" },
+      { accountConnectionId: "foreign-account" }, { instagramAccountId: "foreign-ig" }, { messageText: "Other keyword" },
+      { timestamp: Date.now() - 86400_001 }]) {
+      expect(await routeMusaStoryReply({ ...data, ...input }, retryUntil)).toBe("unmatched");
+    }
+    expect(await state.db.flowRun.count()).toBe(0);
+    expect(await Promise.all([routeMusaStoryReply(data, retryUntil), routeMusaStoryReply(data, retryUntil)])).toEqual(["handled", "handled"]);
+    expect(await state.db.flowRun.count()).toBe(1);
+    const run = await state.db.flowRun.findFirstOrThrow();
+    await executeFlowRun(run.id);
+    expect((await state.db.flowRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe("WAITING");
+    await answer(run.id, "GUIA", data.messageId);
+    expect((await state.db.flowRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe("WAITING");
+    await answer(run.id, "GUIA", "new-inbound");
+    expect((await state.db.flowRun.findUniqueOrThrow({ where: { id: run.id } })).status).toBe("COMPLETED");
+    expect(state.sendPublic).not.toHaveBeenCalled();
+    expect(state.sendText).toHaveBeenCalledTimes(2);
+    expect(state.sendText.mock.calls[0][0]).toMatchObject({ commentId: undefined, userId: data.senderId });
+    await state.db.musaPublication.delete({ where: { id: record.id } });
   });
 
   it("keeps cancellation terminal when the provider call is still in progress", async () => {
