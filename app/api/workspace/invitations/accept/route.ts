@@ -3,6 +3,8 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
 import { normalizeInvitationEmail } from "@/lib/workspace-invitations";
 import { acceptWorkspaceInvitation } from "@/lib/auth-admission";
+import { workspaceSelectionResponse } from "@/lib/workspace-management";
+import { findWorkspaceMembership } from "@/lib/workspace-selection";
 
 export async function POST(request: NextRequest) {
   const session = await auth();
@@ -26,16 +28,16 @@ export async function POST(request: NextRequest) {
     where: { token },
     include: { workspace: { select: { name: true } } },
   });
-  if (!invitation || invitation.status !== "PENDING") {
+  if (!invitation || (invitation.status !== "PENDING" && invitation.status !== "ACCEPTED")) {
     return NextResponse.json(
       { success: false, error: "Invitation is no longer available" },
       { status: 404 }
     );
   }
 
-  if (invitation.expiresAt <= new Date()) {
-    await prisma.workspaceInvitation.update({
-      where: { id: invitation.id },
+  if (invitation.status === "PENDING" && invitation.expiresAt <= new Date()) {
+    await prisma.workspaceInvitation.updateMany({
+      where: { id: invitation.id, token, status: "PENDING" },
       data: { status: "EXPIRED" },
     });
     return NextResponse.json(
@@ -51,14 +53,15 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const accepted = await acceptWorkspaceInvitation(invitation.id, session.user.id, session.user.email);
-  if (!accepted) return NextResponse.json({ success: false, error: "Invitation is no longer available" }, { status: 403 });
+  // The first verified sign-in can already have accepted this invitation.
+  const membership = invitation.status === "ACCEPTED"
+    ? await findWorkspaceMembership(session.user.id, invitation.workspaceId)
+    : await acceptWorkspaceInvitation(invitation.id, session.user.id, session.user.email);
+  if (!membership) return NextResponse.json({ success: false, error: "Invitation is no longer available" }, { status: 403 });
 
-  return NextResponse.json({
-    success: true,
-    data: {
-      workspaceName: invitation.workspace.name,
-    },
+  return workspaceSelectionResponse(request, {
+    id: invitation.workspaceId,
+    name: invitation.workspace.name,
   });
 }
 

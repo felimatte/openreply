@@ -4,7 +4,7 @@ import Resend from "next-auth/providers/resend";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "@/lib/db/client";
 import { ensureWorkspaceForUser } from "@/lib/workspace";
-import { resolveUserWorkspace } from "@/lib/workspace-selection";
+import { clearStaleWorkspaceSelection, resolveUserWorkspace } from "@/lib/workspace-selection";
 import { isEmailAdmittedToSignIn } from "@/lib/auth-admission";
 
 type AdapterPrismaClient = Parameters<typeof PrismaAdapter>[0];
@@ -45,6 +45,9 @@ export const authConfig = {
     },
   },
   events: {
+    async signIn({ user }) {
+      if (user.id) await clearStaleWorkspaceSelection(user.id);
+    },
     async createUser({ user }) {
       if (user.id) {
         await ensureWorkspaceForUser(user.id, user.email);
