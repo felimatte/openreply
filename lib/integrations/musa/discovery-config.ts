@@ -8,7 +8,7 @@ export const DISCOVERY_CALLBACK = "/api/integrations/musa/discovery/callback";
 export const DISCOVERY_COOKIE = "openreply-discovery-state";
 export const DISCOVERY_TTL_MS = 10 * 60_000;
 
-export function discoveryConfig() {
+export function facebookOAuthConfig(callbackPath: string) {
   const appId = process.env.FACEBOOK_APP_ID ?? "";
   const appSecret = process.env.FACEBOOK_APP_SECRET ?? "";
   const version = getMetaGraphApiVersion();
@@ -19,7 +19,11 @@ export function discoveryConfig() {
     || (base.protocol !== "https:" && !(base.protocol === "http:" && base.hostname === "localhost"))) {
     throw new Error("DISCOVERY_NOT_CONFIGURED");
   }
-  return { appId, appSecret, version, baseUrl: base.origin, redirectUri: `${base.origin}${DISCOVERY_CALLBACK}` };
+  return { appId, appSecret, version, baseUrl: base.origin, redirectUri: `${base.origin}${callbackPath}` };
+}
+
+export function discoveryConfig() {
+  return facebookOAuthConfig(DISCOVERY_CALLBACK);
 }
 
 export function discoveryAuthorizationUrl(state: string): string {

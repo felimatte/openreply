@@ -26,6 +26,8 @@ model User {
   musaConnections   MusaConnection[]
   musaPairingCodes  MusaPairingCode[]
   discoveryGrants  MusaDiscoveryGrant[]
+  metaReelAudioGrants MetaReelAudioGrant[]
+  metaReelAudioFlows  MetaReelAudioFlow[]
 }
 
 model Account {
@@ -205,9 +207,49 @@ model InstagramAccount {
   discoveryGrants   MusaDiscoveryGrant[]
 
   musaSchedulerGrants MusaSchedulerGrant[]
+  metaReelAudioGrants MetaReelAudioGrant[]
+  metaReelAudioFlows  MetaReelAudioFlow[]
 
   @@index([workspaceId])
+  @@unique([id, workspaceId])
 }
+
+/// A separate Facebook Login grant for the linked Page and Instagram profile.
+model MetaReelAudioGrant {
+  accountId           String @id
+  workspaceId         String
+  grantedByUserId     String
+  facebookAppId       String
+  instagramId         String
+  instagramUserId     String
+  facebookUserId      String
+  facebookInstagramId String
+  pageId              String
+  encryptedTokens     String
+  expiresAt           DateTime
+  scopes              String[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  account             InstagramAccount @relation(fields: [accountId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  grantedBy           User @relation(fields: [grantedByUserId], references: [id], onDelete: Cascade)
+}
+
+/// Stores only opaque hashes for a short-lived, single-use Meta callback.
+model MetaReelAudioFlow {
+  accountId        String @id
+  workspaceId      String
+  actorUserId      String
+  facebookAppId    String
+  stateHash        String @unique
+  browserHash      String
+  accountTokenHash String
+  instagramId      String
+  expiresAt        DateTime
+  consumedAt       DateTime?
+  account          InstagramAccount @relation(fields: [accountId, workspaceId], references: [id, workspaceId], onDelete: Cascade)
+  actor            User @relation(fields: [actorUserId], references: [id], onDelete: Cascade)
+}
+
 
 /// One short-lived, single-use browser round trip per MUSA grant/account.
 model MusaDiscoveryFlow {

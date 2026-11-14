@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { decryptToken } from "@/lib/meta/oauth";
-import { DISCOVERY_SCOPES, discoveryConfig } from "./discovery-config";
+import { DISCOVERY_SCOPES, discoveryConfig, facebookOAuthConfig } from "./discovery-config";
 import { discoveryStage } from "./discovery-diagnostics";
 
 const id = z.string().regex(/^\d{1,40}$/);
@@ -42,8 +42,7 @@ function graphUrl(path: string, params: Record<string, string>): URL {
   url.search = new URLSearchParams(params).toString(); return url;
 }
 
-async function exchange(code: string, signal: AbortSignal) {
-  const { appId, appSecret, redirectUri } = discoveryConfig();
+async function exchange(code: string, signal: AbortSignal, { appId, appSecret, redirectUri }: ReturnType<typeof facebookOAuthConfig>) {
   const short = await discoveryStage("exchange_code", async () => tokenResult.parse(await readJson(graphUrl("oauth/access_token", {
     client_id: appId, client_secret: appSecret, redirect_uri: redirectUri, code,
   }), null, signal)));
@@ -52,11 +51,11 @@ async function exchange(code: string, signal: AbortSignal) {
   }), null, signal)));
 }
 
-async function validateToken(token: string, signal: AbortSignal) {
+async function validateToken(token: string, signal: AbortSignal, requiredScopes: readonly string[]) {
   const { appId, appSecret } = discoveryConfig();
   const { data } = await discoveryStage("token_metadata", async () => debugResult.parse(await readJson(graphUrl("debug_token", { input_token: token }), `${appId}|${appSecret}`, signal)));
   const permissions = await discoveryStage("permissions", async () => permissionResult.parse(await readJson(graphUrl("me/permissions", {}), token, signal)));
-  if (data.app_id !== appId || DISCOVERY_SCOPES.some(scope => !data.scopes.includes(scope)
+  if (data.app_id !== appId || requiredScopes.some(scope => !data.scopes.includes(scope)
     || !permissions.data.some(item => item.permission === scope && item.status === "granted"))) throw new Error("DISCOVERY_PERMISSION_REQUIRED");
   if (Math.min(data.expires_at, data.data_access_expires_at) * 1000 <= Date.now() + 60_000) throw new Error("DISCOVERY_EXPIRED");
   return data;
@@ -110,16 +109,49 @@ async function findOwnPage(token: string, instagramId: string, scopes: z.infer<t
   return pageId;
 }
 
-export async function exchangeDiscoveryGrant(code: string, account: { instagramId: string; accessToken: string }, signal: AbortSignal) {
-  const token = await exchange(code, signal);
-  const debug = await validateToken(token.access_token, signal);
-  const igUrl = new URL(`https://graph.instagram.com/${discoveryConfig().version}/me?fields=id,user_id`);
+type ExistingInstagramAccount = { instagramId: string; accessToken: string };
+
+async function exchangeLinkedFacebookGrant(
+  code: string,
+  account: ExistingInstagramAccount,
+  signal: AbortSignal,
+  config: ReturnType<typeof facebookOAuthConfig>,
+  scopes: readonly string[],
+) {
+  const token = await exchange(code, signal, config);
+  const debug = await validateToken(token.access_token, signal, scopes);
+  const igUrl = new URL(`https://graph.instagram.com/${config.version}/me?fields=id,user_id`);
   const own = await discoveryStage("instagram_identity", async () => instagramIdentity.parse(await readJson(igUrl, decryptToken(account.accessToken), signal)));
   if (![own.id, own.user_id].includes(account.instagramId)) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
-  // Prove cross-login resolution through Meta; a matching username is never evidence.
+  // Prove cross-login resolution through Meta.
   const resolved = await discoveryStage("facebook_identity", async () => facebookIdentity.parse(await readJson(graphUrl(own.user_id, { fields: "id" }), token.access_token, signal)));
   const pageId = await discoveryStage("linked_page", () => findOwnPage(token.access_token, resolved.id, debug.granular_scopes, signal));
   const expiresAt = new Date(Math.min(Date.now() + token.expires_in * 1000, debug.expires_at * 1000, debug.data_access_expires_at * 1000));
   return { token: token.access_token, facebookUserId: debug.user_id, facebookInstagramId: resolved.id,
-    instagramUserId: own.user_id, pageId, expiresAt, scopes: [...DISCOVERY_SCOPES] };
+    instagramUserId: own.user_id, pageId, expiresAt, scopes: [...scopes] };
+}
+
+export function exchangeDiscoveryGrant(code: string, account: ExistingInstagramAccount, signal: AbortSignal) {
+  return exchangeLinkedFacebookGrant(code, account, signal, discoveryConfig(), DISCOVERY_SCOPES);
+}
+
+export async function exchangeMetaReelAudioGrant(
+  code: string,
+  account: ExistingInstagramAccount,
+  signal: AbortSignal,
+  config: ReturnType<typeof facebookOAuthConfig>,
+  scopes: readonly string[],
+) {
+  const grant = await exchangeLinkedFacebookGrant(code, account, signal, config, scopes);
+  const page = await discoveryStage("linked_page", async () => z.object({
+    id,
+    access_token: tokenResult.shape.access_token,
+    instagram_business_account: z.object({ id }),
+  }).parse(await readJson(graphUrl(grant.pageId, {
+    fields: "id,access_token,instagram_business_account{id}",
+  }), grant.token, signal)));
+  if (page.id !== grant.pageId || page.instagram_business_account.id !== grant.facebookInstagramId) {
+    throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
+  }
+  return { ...grant, facebookAppId: config.appId, pageAccessToken: page.access_token };
 }
