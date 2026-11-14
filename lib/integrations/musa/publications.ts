@@ -8,6 +8,8 @@ import { getMusaPublishingCapability } from "./publications-capabilities";
 import { isMusaCampaignAttachable, musaPublicationInputSchema, publicationFormat, publicationPayloadHash, type MusaPublicationInput } from "./publications-policy";
 import { advanceMetaCarousel } from "./publications-carousel";
 import { copyMusaPublicationFlow } from "./flows";
+import { getMetaReelAudio } from "./meta-reel-audio";
+import { getMetaReelAudioGrant } from "./meta-reel-audio-grant";
 import { getZernioReelAudio } from "./reel-audio";
 import { createMetaContainer, createZernioPublication, getZernioPublication, metaContainerStatus,
   metaMediaPermalink, metaPublishingQuota, MusaProviderError, publishMetaContainer, readZernioPublication } from "./publications-provider";
@@ -17,6 +19,16 @@ const transactionOptions = { maxWait: 1000, timeout: 3000 };
 const scope = (context: MusaConnectionContext, publicationId: string) => ({
   connectionId: context.connectionId, workspaceId: context.workspaceId, publicationId,
 });
+
+async function publicationAccess(account: ReturnType<typeof requireMusaAccount>, payload: MusaPublicationInput) {
+  if (account.provider === "META" && payload.audioConfiguration) {
+    const grant = await getMetaReelAudioGrant(account);
+    if (!grant) throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
+    return { provider: { provider: "META", graph: "facebook", accessToken: grant.pageAccessToken } as const,
+      instagramId: grant.instagramId, audioAccess: grant };
+  }
+  return { provider: await createInstagramContext(account), instagramId: account.instagramId, audioAccess: null };
+}
 
 export function musaPublicationResult(row: MusaPublication) {
   const input = musaPublicationInputSchema.safeParse(row.payload);
@@ -79,17 +91,19 @@ async function reconcileMusaPublication(context: MusaConnectionContext, row: Mus
     nextAttemptAt: new Date(now.getTime() + 60_000) } });
   if (!acquired.count) return;
   try {
+    const payload = musaPublicationInputSchema.parse(row.payload);
+    const account = requireMusaAccount(context, row.accountId);
     if (row.stage === "FINALIZE" && row.mediaId) {
       let permalink = row.permalink;
-      if (!permalink && row.provider === "META" && publicationFormat(musaPublicationInputSchema.parse(row.payload)) !== "story") {
+      if (!permalink && row.provider === "META" && publicationFormat(payload) !== "story") {
         try {
-          const provider = await createInstagramContext(requireMusaAccount(context, row.accountId));
+          const { provider } = await publicationAccess(account, payload);
           permalink = await metaMediaPermalink(provider, row.mediaId);
         } catch { permalink = null; }
       }
       await finishPublication(row, leaseToken, permalink);
     } else {
-      const provider = await createInstagramContext(requireMusaAccount(context, row.accountId));
+      const { provider } = await publicationAccess(account, payload);
       if (provider.provider !== "META" || !row.containerId) throw new MusaProviderError("PROVIDER_ACCOUNT_MISMATCH");
       const status = await metaContainerStatus(provider, row.containerId);
       if (status === "PUBLISHED") await confirmMetaContainer(row, leaseToken);
@@ -220,6 +234,7 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
     data: { leaseToken, leaseUntil: new Date(now.getTime() + LEASE_MS) } });
   if (!acquired.count) return musaPublicationResult(await loadMusaPublication(context, publicationId));
   let current = (await prisma.musaPublication.findUnique({ where: { id: row.id } }))!;
+  let facebookAudio = false;
   const save = async (data: Prisma.MusaPublicationUpdateManyMutationInput) => {
     const result = await prisma.musaPublication.updateMany({ where: { id: row.id, leaseToken },
       data: { ...(data.stage ? { errorCode: null } : {}), ...data } });
@@ -232,6 +247,7 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
   try {
     const payload = musaPublicationInputSchema.parse(current.payload);
     const story = publicationFormat(payload) === "story";
+    facebookAudio = account.provider === "META" && Boolean(payload.audioConfiguration);
     if (["META_CREATING", "META_CHILD_CREATING", "META_PUBLISHING"].includes(current.stage)) {
       // A worker died after the write-ahead marker. Never repeat that POST.
       await save({ status: "uncertain", errorCode: "PUBLICATION_CONFIRMATION_REQUIRED" });
@@ -241,21 +257,34 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
       if (!capability.canPublish) throw new MusaProviderError(capability.publishUnavailableReason ?? "PUBLISH_PERMISSION_REQUIRED");
       if (!(capability.supportedFormats ?? ["reel"]).includes(publicationFormat(payload)))
         throw new MusaProviderError("FORMAT_UNAVAILABLE");
-      if (payload.audioConfiguration && account.provider !== "ZERNIO")
-        throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
+      if (facebookAudio && payload.audioConfiguration) {
+        if (!await getMetaReelAudioGrant(account)) throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
+        if (payload.audioConfiguration.audioVolume === 0 || payload.audioConfiguration.videoVolume === 0)
+          throw new MusaProviderError("REEL_AUDIO_VOLUME_UNAVAILABLE");
+      }
       if (story && payload.flowId && capability.canAttachStoryFlowOnPublish !== true)
         throw new MusaProviderError("STORY_FLOW_UNAVAILABLE");
       await save({ stage: "READY", nextAttemptAt: null });
     } else {
-      const provider = await createInstagramContext(account);
-      if (provider.provider === "META" && publicationFormat(payload) === "carousel" &&
+      if (current.stage === "FINALIZE" && current.mediaId) {
+        let permalink = current.permalink;
+        if (!story && !permalink && account.provider === "META") {
+          permalink = await publicationAccess(account, payload)
+            .then(({ provider }) => metaMediaPermalink(provider, current.mediaId!)).catch(() => null);
+        }
+        await finishPublication(current, leaseToken, permalink);
+        return musaPublicationResult(await loadMusaPublication(context, publicationId));
+      }
+      const { provider, instagramId, audioAccess } = await publicationAccess(account, payload);
+      if (provider.provider === "META" && !("graph" in provider) && publicationFormat(payload) === "carousel" &&
         ["READY", "META_CHILD_PROCESSING", "META_PARENT_READY"].includes(current.stage)) {
         await assertCampaignUnchanged(current);
-        await advanceMetaCarousel({ row: current, provider, instagramId: account.instagramId, payload, save });
+        await advanceMetaCarousel({ row: current, provider, instagramId, payload, save });
       } else if (current.stage === "READY" && provider.provider === "META") {
         await assertCampaignUnchanged(current);
+        if (audioAccess && payload.audioConfiguration) await getMetaReelAudio(audioAccess, payload.audioConfiguration.audioId);
         await save({ stage: "META_CREATING", attemptStartedAt: new Date() });
-        const containerId = await createMetaContainer(provider, account.instagramId, payload);
+        const containerId = await createMetaContainer(provider, instagramId, payload);
         await save({ stage: "META_PROCESSING", containerId, nextAttemptAt: new Date(Date.now() + 30_000) });
       } else if (current.stage === "META_PROCESSING" && current.containerId) {
         const status = await metaContainerStatus(provider, current.containerId);
@@ -264,13 +293,13 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
         else if (status === "PUBLISHED") await confirmMetaContainer(current, leaseToken);
         else await wait(60);
       } else if (current.stage === "META_QUOTA") {
-        if (await metaPublishingQuota(provider, account.instagramId)) await save({ stage: "META_READY", nextAttemptAt: null });
+        if (await metaPublishingQuota(provider, instagramId)) await save({ stage: "META_READY", nextAttemptAt: null });
         else await wait(300, "PUBLISHING_QUOTA_REACHED");
       } else if (current.stage === "META_READY" && current.containerId) {
         await assertCampaignUnchanged(current);
         await save({ stage: "META_PUBLISHING", attemptStartedAt: new Date() });
-        const mediaId = await publishMetaContainer(provider, account.instagramId, current.containerId);
-        if (story && !isPublishedStoryId(mediaId, current.containerId))
+        const mediaId = await publishMetaContainer(provider, instagramId, current.containerId);
+        if ((story || facebookAudio) && !isPublishedStoryId(mediaId, current.containerId))
           throw new MusaProviderError("PUBLICATION_ID_UNAVAILABLE", true);
         await save({ stage: "FINALIZE", mediaId, nextAttemptAt: null });
         if (story) await finishPublication(current, leaseToken, null);
@@ -303,10 +332,6 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
           }
         } else if (["failed", "cancelled"].includes(result.status)) throw new MusaProviderError("PROVIDER_PUBLICATION_FAILED");
         else await wait(30);
-      } else if (current.stage === "FINALIZE" && current.mediaId) {
-        let permalink = current.permalink;
-        if (!story && !permalink && provider.provider === "META") permalink = await metaMediaPermalink(provider, current.mediaId).catch(() => null);
-        await finishPublication(current, leaseToken, permalink);
       } else throw new MusaProviderError("PUBLICATION_STATE_INVALID", true);
     }
   } catch (error) {
@@ -319,6 +344,11 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
       if (current.stage === "META_CHILD_CREATING") await save({ stage: "READY" });
       if (current.stage === "META_PUBLISHING") await save({ stage: "META_READY" });
       await wait(60, error.code);
+    } else if (facebookAudio && current.containerId &&
+      ["REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN", "RECONNECT_REQUIRED"].includes(error.code)) {
+      // Keep the same container resumable when Facebook authorization expires.
+      if (current.stage === "META_PUBLISHING") await save({ stage: "META_READY" });
+      await wait(300, error.code);
     } else if (["ZERNIO_CREATING", "ZERNIO_PROCESSING"].includes(current.stage) && error.code !== "PROVIDER_PUBLICATION_FAILED") {
       // Losing read/auth access does not cancel a post already handed to Zernio.
       // A previous create response may also have been lost. Do not invite a new UUID.

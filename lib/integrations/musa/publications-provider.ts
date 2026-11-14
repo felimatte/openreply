@@ -9,23 +9,32 @@ export class MusaProviderError extends Error {
   }
 }
 
+export type FacebookPublicationContext = { provider: "META"; graph: "facebook"; accessToken: string };
+export type PublicationProviderContext = InstagramContext | FacebookPublicationContext;
+
+function usesFacebook(context: PublicationProviderContext): context is FacebookPublicationContext {
+  return context.provider === "META" && "graph" in context;
+}
+
 export async function publicationProviderRequest(
-  context: InstagramContext, path: string,
+  context: PublicationProviderContext, path: string,
   options: { method?: "GET" | "POST"; body?: unknown; idempotencyKey?: string; timeoutMs?: number;
     audioLookup?: "catalog" | "track" } = {},
 ): Promise<unknown> {
   const method = options.method ?? "GET";
   const base = context.provider === "META"
-    ? `https://graph.instagram.com/${getMetaGraphApiVersion()}` : "https://zernio.com/api/v1";
+    ? `https://graph.${usesFacebook(context) ? "facebook" : "instagram"}.com/${getMetaGraphApiVersion()}` : "https://zernio.com/api/v1";
   const credential = context.provider === "META" ? context.accessToken : context.apiKey;
+  const form = options.body instanceof URLSearchParams;
   let response: Response;
   let body: unknown;
   const signal = AbortSignal.timeout(options.timeoutMs ?? 3500);
   try {
     response = await fetch(`${base}${path}`, {
-      method, headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json",
+      method, headers: { Authorization: `Bearer ${credential}`,
+        ...(!form ? { "Content-Type": "application/json" } : {}),
         ...(options.idempotencyKey ? { "Idempotency-Key": options.idempotencyKey } : {}) },
-      ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+      ...(options.body === undefined ? {} : { body: form ? options.body as URLSearchParams : JSON.stringify(options.body) }),
       cache: "no-store", redirect: "error", signal,
     });
     body = await providerJson(response, signal);
@@ -34,6 +43,14 @@ export async function publicationProviderRequest(
   if (!response.ok) {
     if (response.status === 429) throw new MusaProviderError("PROVIDER_RATE_LIMIT", false, true);
     if (response.status === 401 || response.status === 403) throw new MusaProviderError("RECONNECT_REQUIRED");
+    if (usesFacebook(context)) {
+      const meta = z.object({ error: z.object({ code: z.number(), error_subcode: z.number().optional() }) }).safeParse(body);
+      const error = meta.success ? meta.data.error : undefined;
+      if (error && [10, 190, 200].includes(error.code)) throw new MusaProviderError("RECONNECT_REQUIRED");
+      if (error && [4, 17, 32, 613, 80004].includes(error.code)) throw new MusaProviderError("PROVIDER_RATE_LIMIT", false, true);
+      if (options.audioLookup === "track" && (response.status === 404 || error?.code === 100 && error.error_subcode === 33))
+        throw new MusaProviderError("REEL_AUDIO_UNAVAILABLE");
+    }
     if (context.provider === "ZERNIO" && options.audioLookup) {
       const code = z.object({ code: z.string() }).safeParse(body);
       if (response.status === 400 && code.success && code.data.code === "instagram_audio_requires_facebook_login")
@@ -70,16 +87,25 @@ async function providerJson(response: Response, signal: AbortSignal): Promise<un
 }
 
 const remoteId = z.object({ id: z.string().min(1) });
-export async function createMetaContainer(context: InstagramContext, instagramId: string, input: MusaPublicationInput) {
+export async function createMetaContainer(context: PublicationProviderContext, instagramId: string, input: MusaPublicationInput) {
   const format = publicationFormat(input), media = publicationMedia(input), cover = publicationCover(input);
   if (format === "carousel") throw new MusaProviderError("PUBLICATION_STATE_INVALID");
-  if (input.audioConfiguration) throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
+  const audio = input.audioConfiguration;
+  if (audio && !usesFacebook(context)) throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
+  if (audio && (audio.audioVolume === 0 || audio.videoVolume === 0))
+    throw new MusaProviderError("REEL_AUDIO_VOLUME_UNAVAILABLE");
   const story = { media_type: "STORIES", ...(media[0].type === "image" ? { image_url: media[0].url } : { video_url: media[0].url }) };
-  const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
-    method: "POST", body: format === "story" ? story : { ...(format === "image" ? { image_url: media[0].url }
+  const body = format === "story" ? story : { ...(format === "image" ? { image_url: media[0].url }
       : { media_type: "REELS", video_url: media[0].url, ...(cover ? { cover_url: cover } : {}),
         ...(input.thumbOffset !== undefined ? { thumb_offset: input.thumbOffset } : {}),
-        ...(input.trialReel ? { trial_params: { graduation_strategy: input.trialReel.graduationStrategy } } : {}) }), caption: input.caption },
+        ...(audio ? { audio_configuration: JSON.stringify({
+          audio_id: audio.audioId, audio_volume: audio.audioVolume, video_volume: audio.videoVolume,
+        }) } : {}),
+        ...(input.trialReel ? { trial_params: { graduation_strategy: input.trialReel.graduationStrategy } } : {}) }), caption: input.caption };
+  const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
+    method: "POST",
+    body: audio ? new URLSearchParams(Object.entries(body).map(([key, value]) =>
+      [key, typeof value === "string" ? value : JSON.stringify(value)])) : body,
   });
   const parsed = remoteId.safeParse(raw);
   if (!parsed.success) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", true);
@@ -105,21 +131,21 @@ export async function createMetaCarouselContainer(context: InstagramContext, ins
   return parsed.data.id;
 }
 
-export async function metaContainerStatus(context: InstagramContext, containerId: string) {
+export async function metaContainerStatus(context: PublicationProviderContext, containerId: string) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(containerId)}?fields=status_code`);
   const parsed = z.object({ id: z.string(), status_code: z.enum(["IN_PROGRESS", "FINISHED", "ERROR", "EXPIRED", "PUBLISHED"]) }).safeParse(raw);
   if (!parsed.success || parsed.data.id !== containerId) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", false, true);
   return parsed.data.status_code;
 }
 
-export async function metaPublishingQuota(context: InstagramContext, instagramId: string) {
+export async function metaPublishingQuota(context: PublicationProviderContext, instagramId: string) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/content_publishing_limit?fields=quota_usage,config`);
   const parsed = z.object({ data: z.array(z.object({ quota_usage: z.number(), config: z.object({ quota_total: z.number() }) })) }).safeParse(raw);
   if (!parsed.success || !parsed.data.data.length) throw new MusaProviderError("PUBLISHING_QUOTA_UNAVAILABLE", false, true);
   return parsed.data.data[0].quota_usage < parsed.data.data[0].config.quota_total;
 }
 
-export async function publishMetaContainer(context: InstagramContext, instagramId: string, containerId: string) {
+export async function publishMetaContainer(context: PublicationProviderContext, instagramId: string, containerId: string) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media_publish`, {
     method: "POST", body: { creation_id: containerId }, timeoutMs: 7000,
   });
@@ -128,7 +154,7 @@ export async function publishMetaContainer(context: InstagramContext, instagramI
   return parsed.data.id;
 }
 
-export async function metaMediaPermalink(context: InstagramContext, mediaId: string) {
+export async function metaMediaPermalink(context: PublicationProviderContext, mediaId: string) {
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(mediaId)}?fields=id,permalink`);
   const parsed = z.object({ id: z.string(), permalink: z.string().url().optional() }).safeParse(raw);
   if (!parsed.success || parsed.data.id !== mediaId) throw new MusaProviderError("PROVIDER_INVALID_RESPONSE", false, true);

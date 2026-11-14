@@ -65,6 +65,21 @@ describe("publication provider boundary", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ image_url: "https://cdn.example.com/a.jpg", caption: "Foto" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it("uses the Facebook publication token and preserves the exact catalog configuration", async () => {
+    const facebook = { ...meta, graph: "facebook" as const, accessToken: "fixture-page" };
+    const audioConfiguration = { audioId: "123456", audioVolume: 85, videoVolume: 20 };
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "container-fb" }));
+    expect(await createMetaContainer(facebook, "98765", { ...input, audioConfiguration })).toBe("container-fb");
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://graph.facebook.com/v25.0/98765/media",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer fixture-page" }) }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body.get("audio_configuration"))).toEqual({
+      audio_id: "123456", audio_volume: 85, video_volume: 20,
+    });
+    await expect(createMetaContainer(facebook, "98765", { ...input,
+      audioConfiguration: { ...audioConfiguration, videoVolume: 0 },
+    })).rejects.toMatchObject({ code: "REEL_AUDIO_VOLUME_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it.each(["image", "video"] as const)("creates an unpublished carousel child of type %s", async type => {
     fetchMock.mockResolvedValue(Response.json({ id: "child-a" }));
     await createMetaCarouselChild(meta, "ig-a", { type, url: "https://cdn.example.com/media" });
