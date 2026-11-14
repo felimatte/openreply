@@ -153,5 +153,27 @@ export async function exchangeMetaReelAudioGrant(
   if (page.id !== grant.pageId || page.instagram_business_account.id !== grant.facebookInstagramId) {
     throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
   }
-  return { ...grant, facebookAppId: config.appId, pageAccessToken: page.access_token };
+  await Promise.all([
+    discoveryStage("linked_page", async () => {
+      const identity = facebookIdentity.parse(await readJson(graphUrl("me", { fields: "id" }), page.access_token, signal));
+      if (identity.id !== grant.pageId) throw new Error("DISCOVERY_ACCOUNT_MISMATCH");
+    }),
+    discoveryStage("audio_catalog", async () => {
+      z.object({ audio: z.array(z.unknown()), error: z.never().optional() }).parse(await readJson(
+        graphUrl("ig_audio", { audio_type: "music", user_id: grant.facebookInstagramId }), grant.token, signal));
+    }),
+    discoveryStage("publishing_limit", async () => {
+      z.object({
+        data: z.array(z.object({
+          quota_usage: z.number().int().nonnegative(),
+          config: z.record(z.string(), z.unknown()),
+        })).min(1),
+        error: z.never().optional(),
+      }).parse(await readJson(graphUrl(`${grant.facebookInstagramId}/content_publishing_limit`, {
+        fields: "quota_usage,config",
+      }), grant.token, signal));
+    }),
+  ]);
+
+  return { ...grant, facebookAppId: config.appId };
 }

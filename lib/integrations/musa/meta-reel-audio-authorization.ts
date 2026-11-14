@@ -111,7 +111,6 @@ export async function finishMetaReelAudio(claim: Awaited<ReturnType<typeof claim
       facebookInstagramId: result.facebookInstagramId,
       pageId: result.pageId,
       accessToken: result.token,
-      pageAccessToken: result.pageAccessToken,
     }));
     const data = {
       workspaceId: flow.workspaceId,

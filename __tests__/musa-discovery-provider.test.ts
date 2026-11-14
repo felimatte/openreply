@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { encryptToken } from "@/lib/meta/oauth";
 import { DISCOVERY_SCOPES, discoveryAuthorizationUrl, discoveryReturnUrl } from "@/lib/integrations/musa/discovery-config";
-import { exchangeDiscoveryGrant } from "@/lib/integrations/musa/discovery-provider";
+import { exchangeDiscoveryGrant, exchangeMetaReelAudioGrant } from "@/lib/integrations/musa/discovery-provider";
+import { META_REEL_AUDIO_SCOPES, metaReelAudioConfig } from "@/lib/integrations/musa/meta-reel-audio-config";
 
 const remote = vi.fn<typeof fetch>();
 let account: { instagramId: string; accessToken: string };
@@ -202,5 +203,72 @@ describe("authorized granular Page targets", () => {
     targets(["4555"]); pageData = { data: [{ id: "4444", instagram_business_account: { id: "3333" } }] };
     expect(await exchange()).toMatchObject({ pageId: "4444" });
     expect(pageReads()).toEqual(["/v25.0/4444"]);
+  });
+});
+
+describe("Meta Reel audio consent", () => {
+  let audio: unknown;
+  let publishingLimit: unknown;
+  let pageSelf: unknown;
+
+  beforeEach(() => {
+    debug.scopes = META_REEL_AUDIO_SCOPES;
+    permissions = META_REEL_AUDIO_SCOPES.map(permission => ({ permission, status: "granted" }));
+    audio = { audio: [] };
+    // An exhausted quota is still proof of access to the endpoint.
+    publishingLimit = { data: [{ quota_usage: 100, config: { quota_total: 100, quota_duration: 86400 } }] };
+    pageSelf = { id: "4444" };
+
+    const discoveryFetch = remote.getMockImplementation()!;
+    remote.mockImplementation(async (input, options) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v25.0/4444" && url.searchParams.get("fields")?.includes("access_token")) {
+        return body({ id: "4444", instagram_business_account: { id: "3333" }, access_token: "fake-page-token" });
+      }
+      if (url.hostname === "graph.facebook.com" && url.pathname === "/v25.0/me") return body(pageSelf);
+      if (url.pathname === "/v25.0/ig_audio") return body(audio);
+      if (url.pathname === "/v25.0/3333/content_publishing_limit") return body(publishingLimit);
+      return discoveryFetch(input, options);
+    });
+  });
+
+  const exchangeAudio = () => exchangeMetaReelAudioGrant(
+    "fake-code", account, AbortSignal.timeout(1000), metaReelAudioConfig(), META_REEL_AUDIO_SCOPES,
+  );
+
+  it("uses the audio callback, verifies both Meta endpoints, and returns only the Facebook user token", async () => {
+    const grant = await exchangeAudio();
+    expect(grant).toMatchObject({ facebookInstagramId: "3333", pageId: "4444", token: "fake-facebook-token", scopes: META_REEL_AUDIO_SCOPES });
+    expect(JSON.stringify(grant)).not.toContain("fake-page-token");
+
+    const calls = remote.mock.calls.map(([url, options]) => ({ url: new URL(String(url)), headers: options?.headers }));
+    const codeExchange = calls.find(({ url }) => url.searchParams.has("code"));
+    expect(codeExchange?.url.searchParams.get("redirect_uri")).toBe("https://openreply.example/api/instagram/reel-audio/callback");
+    const lookup = calls.find(({ url }) => url.pathname === "/v25.0/ig_audio");
+    expect(Object.fromEntries(lookup!.url.searchParams)).toEqual({ audio_type: "music", user_id: "3333" });
+    expect(lookup?.headers).toEqual({ Authorization: "Bearer fake-facebook-token" });
+    expect(calls.find(({ url }) => url.pathname.endsWith("/content_publishing_limit"))?.headers).toEqual({ Authorization: "Bearer fake-facebook-token" });
+    expect(calls.find(({ url }) => url.hostname === "graph.facebook.com" && url.pathname === "/v25.0/me")?.headers).toEqual({ Authorization: "Bearer fake-page-token" });
+  });
+
+  it("rejects app consent without the effective publishing permission", async () => {
+    permissions = permissions.filter(({ permission }) => permission !== "instagram_content_publish");
+    await expect(exchangeAudio()).rejects.toThrow("DISCOVERY_PERMISSION_REQUIRED");
+    expect(remote.mock.calls.some(([url]) => String(url).includes("/ig_audio"))).toBe(false);
+  });
+
+  it("rejects a Page credential resolving to a different Page", async () => {
+    pageSelf = { id: "4567" };
+    await expect(exchangeAudio()).rejects.toMatchObject({ stage: "linked_page", reason: "account_mismatch" });
+  });
+
+  it("rejects invalid catalogue responses, including an application error with status 200", async () => {
+    audio = { audio: [], error: { code: 10 } };
+    await expect(exchangeAudio()).rejects.toMatchObject({ stage: "audio_catalog", reason: "invalid_response" });
+  });
+
+  it("rejects a quota response without a usable record", async () => {
+    publishingLimit = { data: [] };
+    await expect(exchangeAudio()).rejects.toMatchObject({ stage: "publishing_limit", reason: "invalid_response" });
   });
 });

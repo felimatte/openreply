@@ -12,13 +12,11 @@ const grantCredentials = z.object({
   facebookInstagramId: z.string(),
   pageId: z.string(),
   accessToken: z.string().min(1),
-  pageAccessToken: z.string().min(1),
 });
 
 export type MetaReelAudioGrant = {
   instagramId: string;
   accessToken: string;
-  pageAccessToken: string;
 };
 
 /** Reads the workspace's independent Facebook grant, bound to its Meta account. */
@@ -42,7 +40,7 @@ export async function getMetaReelAudioGrant(account: ProviderAccount & { id: str
     if (tokens.workspaceId !== grant.workspaceId || tokens.accountId !== grant.accountId
       || tokens.facebookAppId !== grant.facebookAppId || tokens.instagramId !== grant.instagramId
       || tokens.facebookInstagramId !== grant.facebookInstagramId || tokens.pageId !== grant.pageId) return null;
-    return { instagramId: grant.facebookInstagramId, accessToken: tokens.accessToken, pageAccessToken: tokens.pageAccessToken };
+    return { instagramId: grant.facebookInstagramId, accessToken: tokens.accessToken };
   } catch {
     return null;
   }
