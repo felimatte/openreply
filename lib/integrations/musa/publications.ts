@@ -24,7 +24,7 @@ async function publicationAccess(account: ReturnType<typeof requireMusaAccount>,
   if (account.provider === "META" && payload.audioConfiguration) {
     const grant = await getMetaReelAudioGrant(account);
     if (!grant) throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
-    return { provider: { provider: "META", graph: "facebook", accessToken: grant.pageAccessToken } as const,
+    return { provider: { provider: "META", graph: "facebook", accessToken: grant.accessToken } as const,
       instagramId: grant.instagramId, audioAccess: grant };
   }
   return { provider: await createInstagramContext(account), instagramId: account.instagramId, audioAccess: null };

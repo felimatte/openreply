@@ -195,8 +195,8 @@ describe("catalog audio before Zernio creation", () => {
 describe("catalog audio with the auxiliary Meta grant", () => {
   const reel = { accountId: "account-a", caption: "Reel", videoUrl: mediaItems[1].url,
     audioConfiguration: { audioId: "1234", audioVolume: 75, videoVolume: 25 } };
-  const access = { instagramId: "777", accessToken: "fixture-user", pageAccessToken: "fixture-page" };
-  const provider = { provider: "META", graph: "facebook", accessToken: "fixture-page" };
+  const access = { instagramId: "777", accessToken: "fixture-user" };
+  const provider = { provider: "META", graph: "facebook", accessToken: "fixture-user" };
 
   it("keeps search, creation, polling, publishing and receipt on the appropriate Facebook identity", async () => {
     seed(reel);

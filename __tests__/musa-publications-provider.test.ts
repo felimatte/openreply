@@ -66,12 +66,12 @@ describe("publication provider boundary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
   it("uses the Facebook publication token and preserves the exact catalog configuration", async () => {
-    const facebook = { ...meta, graph: "facebook" as const, accessToken: "fixture-page" };
+    const facebook = { ...meta, graph: "facebook" as const, accessToken: "fixture-user" };
     const audioConfiguration = { audioId: "123456", audioVolume: 85, videoVolume: 20 };
     fetchMock.mockResolvedValueOnce(Response.json({ id: "container-fb" }));
     expect(await createMetaContainer(facebook, "98765", { ...input, audioConfiguration })).toBe("container-fb");
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://graph.facebook.com/v25.0/98765/media",
-      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer fixture-page" }) }));
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer fixture-user" }) }));
     expect(JSON.parse(fetchMock.mock.calls[0][1].body.get("audio_configuration"))).toEqual({
       audio_id: "123456", audio_volume: 85, video_volume: 20,
     });

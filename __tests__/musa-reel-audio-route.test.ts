@@ -66,7 +66,7 @@ describe("MUSA Reel audio boundary", () => {
   });
   it("uses the verified Facebook identity and user token when the connected Meta account has an audio grant", async () => {
     mocks.auth.mockResolvedValue({ accounts: [{ ...account, provider: "META", zernioAccountId: null }] });
-    mocks.metaGrant.mockResolvedValue({ instagramId: "54321", accessToken: "fixture-user", pageAccessToken: "fixture-page" });
+    mocks.metaGrant.mockResolvedValue({ instagramId: "54321", accessToken: "fixture-user" });
     fetchMock.mockResolvedValueOnce(Response.json({ audio: [{ audio_id: "98761", title: "Pista",
       display_artist: "Artista", audio_type: "music", download_url: track.downloadUrl }] }));
     const result = await GET(request("accountId=account-a&q=Artista%26tema"));
