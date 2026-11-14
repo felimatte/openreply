@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ auth: vi.fn(), capability: vi.fn(), list: vi.fn() }));
+const mocks = vi.hoisted(() => ({ auth: vi.fn(), capability: vi.fn(), list: vi.fn(), metaGrant: vi.fn() }));
 vi.mock("@/lib/integrations/musa/auth", async original => ({
   ...await original<typeof import("@/lib/integrations/musa/auth")>(), requireMusaConnection: mocks.auth,
 }));
 vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPublishingCapability: mocks.capability }));
 vi.mock("@/lib/integrations/musa/flows", () => ({ listMusaFlows: mocks.list }));
+vi.mock("@/lib/integrations/musa/meta-reel-audio-grant", () => ({ getMetaReelAudioGrant: mocks.metaGrant }));
 import { GET as accounts } from "@/app/api/integrations/musa/v1/accounts/route";
 import { GET as flows } from "@/app/api/integrations/musa/v1/flows/route";
 import { MusaIntegrationError } from "@/lib/integrations/musa/errors";
@@ -40,6 +41,13 @@ describe("MUSA content route capabilities and flow boundary", () => {
     const { accounts: [listed] } = await (await accounts(new Request("https://example.invalid/accounts"))).json();
     expect(listed.canChooseReelFrame).toBe(true);
     expect(listed).not.toHaveProperty("canUseReelCatalogAudio");
+  });
+  it("advertises catalog audio for Meta once the supplemental grant is usable", async () => {
+    mocks.capability.mockResolvedValue({ canPublish: true, supportedFormats: ["reel"], publishUnavailableReason: null });
+    mocks.metaGrant.mockResolvedValue({ instagramId: "54321", accessToken: "fixture-facebook" });
+    const result = await (await accounts(new Request("https://example.invalid/accounts"))).json();
+    expect(result.accounts[0]).toMatchObject({ id: account.id, provider: "META", canUseReelCatalogAudio: true });
+    expect(JSON.stringify(result)).not.toContain("fixture-facebook");
   });
   it("reads the catalog only for the account authorized by the existing grant", async () => {
     const response = await flows(new Request("https://example.invalid/flows?accountId=account-a"));

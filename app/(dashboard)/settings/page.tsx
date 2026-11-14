@@ -8,6 +8,7 @@ import { ZernioConnection } from "@/components/zernio-connection";
 import { InstagramConnectNotice } from "@/components/instagram-connect-notice";
 import { ContactSyncSettings } from "@/components/contact-sync-settings";
 import { MusaConnectionSettings } from "@/components/musa-connection-settings";
+import { ReelAudioSettings } from "@/components/reel-audio-settings";
 import { WorkspaceConnectLink } from "@/components/workspace-connect-link";
 import { WorkspaceSettings } from "@/components/workspace-settings";
 
@@ -275,6 +276,11 @@ export default function SettingsPage() {
           >
             {t("Connect using your own Meta app")}
           </WorkspaceConnectLink>
+        </div>
+        <div className="mt-5">
+          <Suspense fallback={null}>
+            <ReelAudioSettings accounts={accounts.filter(account => account.provider === "META")} canManage={canManageMembers} />
+          </Suspense>
         </div>
       </section>
 

@@ -65,6 +65,31 @@ describe("publication provider boundary", () => {
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ image_url: "https://cdn.example.com/a.jpg", caption: "Foto" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it("uses the Facebook publication token and preserves the exact catalog configuration", async () => {
+    const facebook = { ...meta, graph: "facebook" as const, accessToken: "fixture-user" };
+    const audioConfiguration = { audioId: "123456", audioVolume: 85, videoVolume: 20 };
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "container-fb" }));
+    expect(await createMetaContainer(facebook, "98765", { ...input, audioConfiguration })).toBe("container-fb");
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith("https://graph.facebook.com/v25.0/98765/media",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer fixture-user" }) }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body.get("audio_configuration"))).toEqual({
+      audio_id: "123456", audio_volume: 85, video_volume: 20,
+    });
+    await expect(createMetaContainer(facebook, "98765", { ...input,
+      audioConfiguration: { ...audioConfiguration, videoVolume: 0 },
+    })).rejects.toMatchObject({ code: "REEL_AUDIO_VOLUME_UNAVAILABLE" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+  it("can retry a transient Facebook read while treating a failed write as uncertain", async () => {
+    const facebook = { ...meta, graph: "facebook" as const };
+    fetchMock.mockImplementation(() => Promise.resolve(Response.json({ error: { code: 2 } }, { status: 400 })));
+    await expect(publicationProviderRequest(facebook, "/ig_audio")).rejects.toMatchObject({
+      code: "PROVIDER_UNREACHABLE", ambiguous: false, retryable: true,
+    });
+    await expect(publicationProviderRequest(facebook, "/54321/media", { method: "POST" })).rejects.toMatchObject({
+      code: "PROVIDER_UNREACHABLE", ambiguous: true, retryable: true,
+    });
+  });
   it.each(["image", "video"] as const)("creates an unpublished carousel child of type %s", async type => {
     fetchMock.mockResolvedValue(Response.json({ id: "child-a" }));
     await createMetaCarouselChild(meta, "ig-a", { type, url: "https://cdn.example.com/media" });

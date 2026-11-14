@@ -7,12 +7,14 @@ const mocks = vi.hoisted(() => ({
   receipt: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   transaction: vi.fn(), context: vi.fn(), capability: vi.fn(), child: vi.fn(), parent: vi.fn(),
   single: vi.fn(), poll: vi.fn(), quota: vi.fn(), publish: vi.fn(), permalink: vi.fn(),
-  zernio: vi.fn(), zernioGet: vi.fn(), zernioAudio: vi.fn(),
+  zernio: vi.fn(), zernioGet: vi.fn(), zernioAudio: vi.fn(), metaAudio: vi.fn(), metaGrant: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: { musaPublication: mocks.receipt, $transaction: mocks.transaction } }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: mocks.context }));
 vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPublishingCapability: mocks.capability }));
 vi.mock("@/lib/integrations/musa/reel-audio", () => ({ getZernioReelAudio: mocks.zernioAudio }));
+vi.mock("@/lib/integrations/musa/meta-reel-audio", () => ({ getMetaReelAudio: mocks.metaAudio }));
+vi.mock("@/lib/integrations/musa/meta-reel-audio-grant", () => ({ getMetaReelAudioGrant: mocks.metaGrant }));
 vi.mock("@/lib/integrations/musa/publications-provider", async original => ({
   ...await original<typeof import("@/lib/integrations/musa/publications-provider")>(),
   createMetaContainer: mocks.single, createMetaCarouselChild: mocks.child, createMetaCarouselContainer: mocks.parent,
@@ -187,5 +189,53 @@ describe("catalog audio before Zernio creation", () => {
     expect(mocks.zernioAudio.mock.invocationCallOrder[0]).toBeLessThan(mocks.zernio.mock.invocationCallOrder[0]);
     expect(mocks.zernio).toHaveBeenCalledTimes(2);
     expect(mocks.zernio.mock.calls[1]).toEqual(mocks.zernio.mock.calls[0]);
+  });
+});
+
+describe("catalog audio with the auxiliary Meta grant", () => {
+  const reel = { accountId: "account-a", caption: "Reel", videoUrl: mediaItems[1].url,
+    audioConfiguration: { audioId: "1234", audioVolume: 75, videoVolume: 25 } };
+  const access = { instagramId: "777", accessToken: "fixture-user" };
+  const provider = { provider: "META", graph: "facebook", accessToken: "fixture-user" };
+
+  it("keeps search, creation, polling, publishing and receipt on the appropriate Facebook identity", async () => {
+    seed(reel);
+    mocks.metaGrant.mockResolvedValue(access);
+    for (let n = 0; n < 10 && row.status === "processing"; n++) await step(reel);
+    expect(row).toMatchObject({ status: "published", mediaId: "media-a" });
+    expect(mocks.metaAudio).toHaveBeenCalledExactlyOnceWith(access, "1234");
+    expect(mocks.metaAudio.mock.invocationCallOrder[0]).toBeLessThan(mocks.single.mock.invocationCallOrder[0]);
+    expect(mocks.single).toHaveBeenCalledExactlyOnceWith(provider, "777", expect.objectContaining({ audioConfiguration: reel.audioConfiguration }));
+    expect(mocks.poll).toHaveBeenCalledExactlyOnceWith(provider, "image-a");
+    expect(mocks.quota).toHaveBeenCalledExactlyOnceWith(provider, "777");
+    expect(mocks.publish).toHaveBeenCalledExactlyOnceWith(provider, "777", "image-a");
+    expect(mocks.permalink).toHaveBeenCalledExactlyOnceWith(provider, "media-a");
+    expect(mocks.context).not.toHaveBeenCalled();
+  });
+  it("stops before sending anything if the authorization or the exact song is unavailable", async () => {
+    seed(reel, { stage: "READY" });
+    expect(await step(reel)).toMatchObject({ status: "failed", errorCode: "REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN" });
+    seed(reel, { stage: "READY" });
+    mocks.metaGrant.mockResolvedValue(access);
+    mocks.metaAudio.mockRejectedValueOnce(new MusaProviderError("REEL_AUDIO_UNAVAILABLE"));
+    expect(await step(reel)).toMatchObject({ status: "failed", errorCode: "REEL_AUDIO_UNAVAILABLE" });
+    expect(mocks.single).not.toHaveBeenCalled();
+  });
+  it("finishes a known publication even when the auxiliary authorization subsequently expires", async () => {
+    seed(reel, { stage: "FINALIZE", mediaId: "media-a" });
+    expect(await step(reel)).toMatchObject({ status: "published", mediaId: "media-a" });
+    expect(mocks.publish).not.toHaveBeenCalled();
+  });
+  it("keeps the existing container when Meta denies an expired token and resumes after reconnection", async () => {
+    seed(reel, { stage: "META_READY", containerId: "existing-container" });
+    mocks.metaGrant.mockResolvedValue(access);
+    mocks.publish.mockRejectedValueOnce(new MusaProviderError("RECONNECT_REQUIRED"));
+    await step(reel);
+    expect(row).toMatchObject({ status: "processing", stage: "META_READY", containerId: "existing-container" });
+    vi.setSystemTime(Date.now() + 300_000);
+    await step(reel);
+    expect(row).toMatchObject({ stage: "FINALIZE", mediaId: "media-a" });
+    expect(mocks.publish.mock.calls).toEqual([[provider, "777", "existing-container"], [provider, "777", "existing-container"]]);
+    expect(mocks.single).not.toHaveBeenCalled();
   });
 });

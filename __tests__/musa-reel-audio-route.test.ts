@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ auth: vi.fn(), context: vi.fn() }));
+const mocks = vi.hoisted(() => ({ auth: vi.fn(), context: vi.fn(), metaGrant: vi.fn() }));
 vi.mock("@/lib/integrations/musa/auth", async (original) => ({
   ...await original<typeof import("@/lib/integrations/musa/auth")>(), requireMusaConnection: mocks.auth,
 }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: mocks.context }));
+vi.mock("@/lib/integrations/musa/meta-reel-audio-grant", () => ({ getMetaReelAudioGrant: mocks.metaGrant }));
 
 import { GET } from "@/app/api/integrations/musa/v1/audio/route";
 import { MusaIntegrationError } from "@/lib/integrations/musa/errors";
@@ -24,8 +25,9 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock);
   mocks.auth.mockResolvedValue({ accounts: [account] });
   mocks.context.mockResolvedValue(provider);
+  vi.stubEnv("META_GRAPH_API_VERSION", "v25.0");
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("MUSA Reel audio boundary", () => {
   it("searches the granted remote account, encodes the query and returns only catalog fields", async () => {
@@ -61,6 +63,28 @@ describe("MUSA Reel audio boundary", () => {
     mocks.auth.mockResolvedValue({ accounts: [{ ...account, provider: "META", zernioAccountId: null }] });
     expect(await (await GET(request())).json()).toEqual({ version: 1, accountId: "account-a", available: false, tracks: [] });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+  it("uses the verified Facebook identity and user token when the connected Meta account has an audio grant", async () => {
+    mocks.auth.mockResolvedValue({ accounts: [{ ...account, provider: "META", zernioAccountId: null }] });
+    mocks.metaGrant.mockResolvedValue({ instagramId: "54321", accessToken: "fixture-user" });
+    fetchMock.mockResolvedValueOnce(Response.json({ audio: [{ audio_id: "98761", title: "Pista",
+      display_artist: "Artista", audio_type: "music", download_url: track.downloadUrl }] }));
+    const result = await GET(request("accountId=account-a&q=Artista%26tema"));
+    expect(await result.json()).toEqual({ version: 1, accountId: "account-a", available: true,
+      tracks: [{ id: "98761", title: "Pista", artist: "Artista", previewUrl: track.downloadUrl }] });
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      "https://graph.facebook.com/v25.0/ig_audio?user_id=54321&audio_type=music&search_query=Artista%26tema",
+      expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer fixture-user" }) }),
+    );
+    expect(mocks.context).not.toHaveBeenCalled();
+  });
+  it("requires reconnection when Meta revokes the supplemental authorization", async () => {
+    mocks.auth.mockResolvedValue({ accounts: [{ ...account, provider: "META", zernioAccountId: null }] });
+    mocks.metaGrant.mockResolvedValue({ instagramId: "54321", accessToken: "fixture-user" });
+    fetchMock.mockResolvedValueOnce(Response.json({ error: { code: 190, message: "internal response" } }, { status: 400 }));
+    const result = await GET(request());
+    expect(result.status).toBe(403);
+    expect(await result.json()).toMatchObject({ error: { code: "RECONNECT_REQUIRED" } });
   });
   it.each([[404, 404, "REEL_AUDIO_UNAVAILABLE"], [403, 403, "RECONNECT_REQUIRED"],
     [429, 429, "PROVIDER_RATE_LIMIT"], [502, 503, "REEL_AUDIO_TEMPORARILY_UNAVAILABLE"]])(

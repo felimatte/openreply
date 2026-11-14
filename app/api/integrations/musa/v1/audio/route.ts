@@ -2,6 +2,8 @@ import { z } from "zod";
 import { createInstagramContext } from "@/lib/instagram/context";
 import { requireMusaAccount, requireMusaConnection } from "@/lib/integrations/musa/auth";
 import { MusaIntegrationError, musaErrorResponse, musaJson } from "@/lib/integrations/musa/errors";
+import { getMetaReelAudioGrant } from "@/lib/integrations/musa/meta-reel-audio-grant";
+import { getMetaReelAudio, searchMetaReelAudio } from "@/lib/integrations/musa/meta-reel-audio";
 import { reelAudioId } from "@/lib/integrations/musa/publications-policy";
 import { MusaProviderError } from "@/lib/integrations/musa/publications-provider";
 import { getZernioReelAudio, searchZernioReelAudio } from "@/lib/integrations/musa/reel-audio";
@@ -27,14 +29,18 @@ export async function GET(request: Request) {
     }
 
     const base = { version: 1, accountId: account.id };
-    if (account.provider !== "ZERNIO") return musaJson({ ...base, available: false, tracks: [] });
-    if (!account.zernioAccountId)
-      throw new MusaIntegrationError(403, "RECONNECT_REQUIRED", "Reconnect this Instagram account to access music.");
-    const provider = await createInstagramContext(account);
-    if (provider.provider !== "ZERNIO") return musaJson({ ...base, available: false, tracks: [] });
-
     try {
       const { audioId, q } = query.data;
+      if (account.provider === "META") {
+        const access = await getMetaReelAudioGrant(account);
+        if (!access) return musaJson({ ...base, available: false, tracks: [] });
+        const tracks = audioId ? [await getMetaReelAudio(access, audioId)] : await searchMetaReelAudio(access, q);
+        return musaJson({ ...base, available: true, tracks });
+      }
+      if (!account.zernioAccountId)
+        throw new MusaIntegrationError(403, "RECONNECT_REQUIRED", "Reconnect this Instagram account to access music.");
+      const provider = await createInstagramContext(account);
+      if (provider.provider !== "ZERNIO") return musaJson({ ...base, available: false, tracks: [] });
       const tracks = audioId ? [await getZernioReelAudio(provider, audioId)] : await searchZernioReelAudio(provider, q);
       return musaJson({ ...base, available: true, tracks });
     } catch (error) {

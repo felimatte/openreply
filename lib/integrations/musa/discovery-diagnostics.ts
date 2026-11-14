@@ -2,7 +2,7 @@ import { ZodError } from "zod";
 
 export type DiscoveryStage = "session" | "query" | "claim" | "consent" | "complete_grant"
   | "exchange_code" | "exchange_long_token" | "token_metadata" | "permissions"
-  | "instagram_identity" | "facebook_identity" | "linked_page";
+  | "instagram_identity" | "facebook_identity" | "linked_page" | "audio_catalog" | "publishing_limit";
 type DiscoveryReason = "invalid_response" | "provider_unavailable" | "permission_required"
   | "expired" | "account_mismatch" | "incomplete_pages" | "aborted" | "unexpected";
 

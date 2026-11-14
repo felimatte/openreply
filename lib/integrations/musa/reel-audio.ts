@@ -11,7 +11,7 @@ const zernioTrack = z.object({
   downloadUrl: z.string().nullish(),
 });
 
-function previewUrl(value?: string | null) {
+export function reelAudioPreviewUrl(value?: string | null) {
   if (!value || value.length > 4096) return null;
   const result = z.url({ protocol: /^https$/ }).safeParse(value);
   if (!result.success) return null;
@@ -26,7 +26,7 @@ function publicTrack(track: z.infer<typeof zernioTrack>) {
     id: track.audioId,
     title: track.title?.trim().slice(0, 200) || track.audioId,
     artist: track.displayArtist?.trim().slice(0, 200) || null,
-    previewUrl: previewUrl(track.downloadUrl),
+    previewUrl: reelAudioPreviewUrl(track.downloadUrl),
   };
 }
 
