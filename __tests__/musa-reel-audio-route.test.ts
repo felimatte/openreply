@@ -15,6 +15,8 @@ const provider = { provider: "ZERNIO", accountId: "remote-a", apiKey: "server-te
 const account = { id: "account-a", provider: "ZERNIO", zernioAccountId: provider.accountId };
 const track = { audioId: "123456", audioType: "music", title: "Sample track", displayArtist: "Sample artist",
   downloadUrl: "https://scontent.cdninstagram.com/o1/audio.mp4?temporary=1", untrusted: "do not echo" };
+const originalTrack = { audioId: "78901", audioType: "original_sound", title: "Sample sound",
+  igUsername: "sample_creator", downloadUrl: track.downloadUrl };
 
 function request(query = "accountId=account-a") {
   return new Request(`https://example.invalid/audio?${query}`);
@@ -31,16 +33,30 @@ afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 describe("MUSA Reel audio boundary", () => {
   it("searches the granted remote account, encodes the query and returns only catalog fields", async () => {
-    fetchMock.mockResolvedValueOnce(Response.json({ audio: [track] }));
+    fetchMock.mockResolvedValueOnce(Response.json({ audio: [track, originalTrack] }));
     const response = await GET(request("accountId=account-a&q=artist%26format%3Dimage"));
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     expect(await response.json()).toEqual({ version: 1, accountId: "account-a", available: true,
-      tracks: [{ id: track.audioId, title: track.title, artist: track.displayArtist, previewUrl: track.downloadUrl }] });
+      tracks: [{ id: track.audioId, title: track.title, artist: track.displayArtist, previewUrl: track.downloadUrl,
+        audioType: "music" }] });
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
       "https://zernio.com/api/v1/accounts/remote-a/instagram/audio?audioType=music&q=artist%26format%3Dimage",
       expect.objectContaining({ method: "GET", redirect: "error", headers: expect.objectContaining({
         Authorization: "Bearer server-test-key",
       }) }),
+    );
+  });
+  it("searches the Zernio original-sound category and labels results from the scoped response", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ audio: [
+      originalTrack, { ...track, audioType: undefined }, { audioId: "321", title: "No creator field" },
+    ] }));
+    const response = await GET(request("accountId=account-a&audioType=original_sound&q=sample"));
+    expect(await response.json()).toMatchObject({ tracks: [
+      { id: originalTrack.audioId, artist: originalTrack.igUsername, audioType: "original_sound" },
+      { id: "321", artist: null, audioType: "original_sound" },
+    ] });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://zernio.com/api/v1/accounts/remote-a/instagram/audio?audioType=original_sound&q=sample",
     );
   });
   it("refreshes the exact track and omits preview URLs outside the Instagram CDN", async () => {
@@ -52,6 +68,16 @@ describe("MUSA Reel audio boundary", () => {
   it("does not substitute a different track returned by the provider", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ audio: { ...track, audioId: "another" } }));
     expect((await GET(request("accountId=account-a&audioId=123456"))).status).toBe(503);
+  });
+  it("retrieves the exact original-sound ID from Zernio without a category filter", async () => {
+    fetchMock.mockResolvedValueOnce(Response.json({ audio: originalTrack }));
+    const response = await GET(request(`accountId=account-a&audioId=${originalTrack.audioId}`));
+    expect(await response.json()).toMatchObject({ tracks: [
+      { id: originalTrack.audioId, artist: originalTrack.igUsername, audioType: "original_sound" },
+    ] });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `https://zernio.com/api/v1/accounts/remote-a/instagram/audio/${originalTrack.audioId}`,
+    );
   });
   it("distinguishes an empty result from a provider without catalog audio", async () => {
     fetchMock.mockResolvedValueOnce(Response.json({ audio: [] }));
@@ -71,12 +97,28 @@ describe("MUSA Reel audio boundary", () => {
       display_artist: "Artista", audio_type: "music", download_url: track.downloadUrl }] }));
     const result = await GET(request("accountId=account-a&q=Artista%26tema"));
     expect(await result.json()).toEqual({ version: 1, accountId: "account-a", available: true,
-      tracks: [{ id: "98761", title: "Pista", artist: "Artista", previewUrl: track.downloadUrl }] });
+      tracks: [{ id: "98761", title: "Pista", artist: "Artista", previewUrl: track.downloadUrl,
+        audioType: "music" }] });
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
       "https://graph.facebook.com/v25.0/ig_audio?user_id=54321&audio_type=music&search_query=Artista%26tema",
       expect.objectContaining({ headers: expect.objectContaining({ Authorization: "Bearer fixture-user" }) }),
     );
     expect(mocks.context).not.toHaveBeenCalled();
+  });
+  it("searches Meta original sounds under the verified identity and refreshes the exact ID", async () => {
+    mocks.auth.mockResolvedValue({ accounts: [{ ...account, provider: "META", zernioAccountId: null }] });
+    mocks.metaGrant.mockResolvedValue({ instagramId: "54321", accessToken: "fixture-user" });
+    const original = { audio_id: "98761", title: "Audio", ig_username: "creator", download_url: track.downloadUrl };
+    fetchMock.mockResolvedValueOnce(Response.json({ audio: [original, { audio_id: "999", audio_type: "music" }] }));
+    fetchMock.mockResolvedValueOnce(Response.json({ ...original, audio_type: "original_sound" }));
+    const tracks = [{ id: "98761", title: "Audio", artist: "creator", previewUrl: track.downloadUrl,
+      audioType: "original_sound" }];
+    expect(await (await GET(request("accountId=account-a&audioType=original_sound&q=creator"))).json()).toMatchObject({ tracks });
+    expect(await (await GET(request("accountId=account-a&audioId=98761"))).json()).toMatchObject({ tracks });
+    expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+      "https://graph.facebook.com/v25.0/ig_audio?user_id=54321&audio_type=original_sound&search_query=creator",
+      "https://graph.facebook.com/v25.0/98761?user_id=54321",
+    ]);
   });
   it("requires reconnection when Meta revokes the supplemental authorization", async () => {
     mocks.auth.mockResolvedValue({ accounts: [{ ...account, provider: "META", zernioAccountId: null }] });
@@ -104,7 +146,8 @@ describe("MUSA Reel audio boundary", () => {
     expect(mocks.context).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
-  it.each(["q=track&audioId=123", "audioId=../../other", "audioId=1&audioId=2"])("rejects an ambiguous or invalid lookup: %s", async (query) => {
+  it.each(["q=track&audioId=123", "audioId=../../other", "audioId=1&audioId=2", "audioType=any",
+    "audioType=music&audioType=original_sound", "audioId=123&audioType=original_sound"])("rejects an ambiguous or invalid lookup: %s", async (query) => {
     expect((await GET(request(`accountId=account-a&${query}`))).status).toBe(400);
     expect(fetchMock).not.toHaveBeenCalled();
   });

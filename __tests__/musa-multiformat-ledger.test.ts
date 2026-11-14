@@ -177,8 +177,8 @@ describe("catalog audio before Zernio creation", () => {
     expect(row).toMatchObject({ stage: "READY", attemptStartedAt: null });
     expect(mocks.zernio).not.toHaveBeenCalled();
   });
-  it("rechecks the exact track, then retries an ambiguous POST without changing the payload", async () => {
-    mocks.zernioAudio.mockResolvedValueOnce({ id: audioConfiguration.audioId });
+  it("rechecks the exact original sound, then retries an ambiguous POST without changing the payload", async () => {
+    mocks.zernioAudio.mockResolvedValueOnce({ id: audioConfiguration.audioId, audioType: "original_sound" });
     mocks.zernio.mockRejectedValueOnce(new MusaProviderError("PROVIDER_UNREACHABLE", true, true))
       .mockResolvedValueOnce({ post: { _id: "remote-post" } });
     await step(reel, connected);
@@ -198,9 +198,10 @@ describe("catalog audio with the auxiliary Meta grant", () => {
   const access = { instagramId: "777", accessToken: "fixture-user" };
   const provider = { provider: "META", graph: "facebook", accessToken: "fixture-user" };
 
-  it("keeps search, creation, polling, publishing and receipt on the appropriate Facebook identity", async () => {
+  it("verifies and publishes original audio with the appropriate Facebook identity", async () => {
     seed(reel);
     mocks.metaGrant.mockResolvedValue(access);
+    mocks.metaAudio.mockResolvedValueOnce({ id: reel.audioConfiguration.audioId, audioType: "original_sound" });
     for (let n = 0; n < 10 && row.status === "processing"; n++) await step(reel);
     expect(row).toMatchObject({ status: "published", mediaId: "media-a" });
     expect(mocks.metaAudio).toHaveBeenCalledExactlyOnceWith(access, "1234");
