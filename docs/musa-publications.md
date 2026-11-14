@@ -1,5 +1,35 @@
 # Publishing from MUSA
 
+## Facebook and TikTok pilot
+
+Social video endpoints use `/api/integrations/musa/v1/social` and authenticate
+with `MUSA_SOCIAL_BRIDGE_TOKEN` and the `X-Musa-Business-Id` header. Configure a
+single business UUID, a stable connection ID and a Zernio profile dedicated to
+the pilot. Use a server-side Zernio key scoped to that profile with read/write
+access to Accounts and Publishing. The Facebook account and Page IDs form a
+pair. The TikTok account ID and native platform user ID form the other pair.
+Either pair can be enabled on its own. See the names in `.env.example`.
+
+- `GET /social/accounts` lists those permitted destinations and their publishing
+  capability. The Facebook Page also appears by its name and native ID.
+- `GET /social/accounts/{accountId}/creator-info` reports options for the permitted
+  TikTok account. MUSA collects the selected options and consent for the actual
+  video and caption before scheduling.
+- `PUT /social/publications/{uuid}` submits one due video, bound to the connection,
+  account and platform. Replay the exact request with the same UUID while it is
+  processing. The provider receives a Reel for Facebook and a direct video for
+  TikTok. It fetches the video from the HTTPS URL in the request.
+- `GET /social/publications/{uuid}` reads a saved receipt and can reconcile a
+  known Zernio post. The request never creates a post. The receipt becomes
+  published once the provider confirms the native media ID.
+
+Change the connection ID when assigning a new profile or different destinations.
+Refreshing the key for the same profile and targets preserves the receipt scope.
+The pilot uses the existing application database after applying the additive
+migration. Instagram publishing is described in the following sections.
+
+## Instagram
+
 MUSA calls `PUT /api/integrations/musa/v1/publications/{uuid}` only when an approved piece is due. Authenticate with the paired MUSA token and business header. Each call performs at most one provider operation (3.5-second network timeout) and returns the durable receipt. Repeat the same PUT after `retryAfterSeconds` while `status` is `processing`. GET may recover an existing receipt using read-only provider calls; it never creates a container or publishes.
 
 The UUID is globally unique and permanently records its payload hash. Changing the account, caption, media URL, cover or campaign under an existing UUID returns 409. Reconnecting MUSA cannot make the same UUID publish again. Processing has a persistent 30-second lease; the application does not rely on in-memory locks or a request staying alive while Instagram transcodes a video.
