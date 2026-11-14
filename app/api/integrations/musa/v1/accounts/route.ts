@@ -12,6 +12,8 @@ export async function GET(request: Request) {
       return { ...publicMusaAccount(account), ...capability,
         supportedFormats: includeStory ? supportedFormats : supportedFormats.filter(format => format !== "story"),
         canPublishTrialReels: capability.canPublish, trialUnavailableReason: capability.publishUnavailableReason,
+        canChooseReelFrame: capability.canPublish,
+        ...(!capability.canPublish || account.provider !== "ZERNIO" ? { canUseReelCatalogAudio: false } : {}),
         canAttachFlowOnPublish: true, ...(includeStory ? { canAttachStoryFlowOnPublish } : {}) };
     }));
     return musaJson({ version: 1, accounts });

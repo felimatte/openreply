@@ -42,6 +42,22 @@ describe("publication provider boundary", () => {
       platformSpecificData: { instagramThumbnail: input.coverUrl, trialParams: { graduationStrategy } } }]);
     expect(fetchMock.mock.calls[0][1].headers["Idempotency-Key"]).toBe("stable-trial-key");
   });
+  it("forwards a frame in milliseconds including zero, and forwards the exact catalog mix to Zernio", async () => {
+    const reel = { accountId: input.accountId, caption: input.caption, videoUrl: input.videoUrl, thumbOffset: 0 };
+    const audioConfiguration = { audioId: "123456", audioVolume: 80, videoVolume: 0 };
+    fetchMock.mockResolvedValueOnce(Response.json({ id: "container" }));
+    await createMetaContainer(meta, "ig-a", reel);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({ media_type: "REELS", caption: reel.caption,
+      video_url: reel.videoUrl, thumb_offset: 0 });
+    await expect(createMetaContainer(meta, "ig-a", { ...reel, audioConfiguration }))
+      .rejects.toMatchObject({ code: "REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    fetchMock.mockResolvedValueOnce(Response.json({ post: { _id: "remote-a" } }));
+    await createZernioPublication(zernio, { ...reel, audioConfiguration }, "stable-key", new Date("2026-11-12T15:00:30Z"));
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).platforms).toEqual([{ platform: "instagram",
+      accountId: zernio.accountId, platformSpecificData: { thumbOffset: 0, audioConfiguration } }]);
+  });
   it("creates a feed image instead of a Reel", async () => {
     fetchMock.mockResolvedValue(Response.json({ id: "image-a" }));
     await createMetaContainer(meta, "ig-a", { accountId: "account-a", caption: "Foto", format: "image",

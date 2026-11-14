@@ -8,6 +8,7 @@ import { getMusaPublishingCapability } from "./publications-capabilities";
 import { isMusaCampaignAttachable, musaPublicationInputSchema, publicationFormat, publicationPayloadHash, type MusaPublicationInput } from "./publications-policy";
 import { advanceMetaCarousel } from "./publications-carousel";
 import { copyMusaPublicationFlow } from "./flows";
+import { getZernioReelAudio } from "./reel-audio";
 import { createMetaContainer, createZernioPublication, getZernioPublication, metaContainerStatus,
   metaMediaPermalink, metaPublishingQuota, MusaProviderError, publishMetaContainer, readZernioPublication } from "./publications-provider";
 
@@ -240,6 +241,8 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
       if (!capability.canPublish) throw new MusaProviderError(capability.publishUnavailableReason ?? "PUBLISH_PERMISSION_REQUIRED");
       if (!(capability.supportedFormats ?? ["reel"]).includes(publicationFormat(payload)))
         throw new MusaProviderError("FORMAT_UNAVAILABLE");
+      if (payload.audioConfiguration && account.provider !== "ZERNIO")
+        throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
       if (story && payload.flowId && capability.canAttachStoryFlowOnPublish !== true)
         throw new MusaProviderError("STORY_FLOW_UNAVAILABLE");
       await save({ stage: "READY", nextAttemptAt: null });
@@ -276,8 +279,11 @@ export async function advanceMusaPublication(context: MusaConnectionContext, pub
         if (current.attemptStartedAt && Date.now() - current.attemptStartedAt.getTime() >= 23 * 3600_000) {
           await save({ status: "uncertain", errorCode: "PROVIDER_IDEMPOTENCY_WINDOW_EXPIRED" });
         } else {
-          if (current.stage === "READY") await save({ stage: "ZERNIO_CREATING", attemptStartedAt: new Date(),
-            providerScheduledAt: new Date(Date.now() + 30_000) });
+          if (current.stage === "READY") {
+            if (payload.audioConfiguration) await getZernioReelAudio(provider, payload.audioConfiguration.audioId);
+            await save({ stage: "ZERNIO_CREATING", attemptStartedAt: new Date(),
+              providerScheduledAt: new Date(Date.now() + 30_000) });
+          }
           const raw = await createZernioPublication(provider, payload, publicationId, current.providerScheduledAt!);
           // Save the provider's own post ID before interpreting a target outcome.
           const id = raw && typeof raw === "object" && "post" in raw && raw.post && typeof raw.post === "object" &&

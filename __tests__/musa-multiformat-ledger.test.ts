@@ -7,11 +7,12 @@ const mocks = vi.hoisted(() => ({
   receipt: { findFirst: vi.fn(), findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   transaction: vi.fn(), context: vi.fn(), capability: vi.fn(), child: vi.fn(), parent: vi.fn(),
   single: vi.fn(), poll: vi.fn(), quota: vi.fn(), publish: vi.fn(), permalink: vi.fn(),
-  zernio: vi.fn(), zernioGet: vi.fn(),
+  zernio: vi.fn(), zernioGet: vi.fn(), zernioAudio: vi.fn(),
 }));
 vi.mock("@/lib/db/client", () => ({ prisma: { musaPublication: mocks.receipt, $transaction: mocks.transaction } }));
 vi.mock("@/lib/instagram/context", () => ({ createInstagramContext: mocks.context }));
 vi.mock("@/lib/integrations/musa/publications-capabilities", () => ({ getMusaPublishingCapability: mocks.capability }));
+vi.mock("@/lib/integrations/musa/reel-audio", () => ({ getZernioReelAudio: mocks.zernioAudio }));
 vi.mock("@/lib/integrations/musa/publications-provider", async original => ({
   ...await original<typeof import("@/lib/integrations/musa/publications-provider")>(),
   createMetaContainer: mocks.single, createMetaCarouselChild: mocks.child, createMetaCarouselContainer: mocks.parent,
@@ -153,5 +154,38 @@ describe("format capabilities and image delivery", () => {
   it("an old capability without supportedFormats never enables a new format", async () => {
     mocks.capability.mockResolvedValue({ canPublish: true, publishUnavailableReason: null });
     expect(await step()).toMatchObject({ status: "failed", errorCode: "FORMAT_UNAVAILABLE" }); expect(mocks.child).not.toHaveBeenCalled();
+  });
+});
+
+describe("catalog audio before Zernio creation", () => {
+  const audioConfiguration = { audioId: "1234", audioVolume: 80, videoVolume: 10 };
+  const reel = { accountId: "account-a", caption: "Test", videoUrl: mediaItems[1].url, audioConfiguration };
+  const zernio = { provider: "ZERNIO", accountId: "remote-a", apiKey: "fixture" };
+  const connected = { ...context, accounts: [{ ...context.accounts[0], provider: "ZERNIO" as const,
+    zernioAccountId: "remote-a" }] };
+
+  beforeEach(() => {
+    mocks.context.mockResolvedValue(zernio);
+    seed(reel, { stage: "READY", provider: "ZERNIO" });
+  });
+
+  it("fails an unavailable track before saving the write-ahead marker or posting", async () => {
+    mocks.zernioAudio.mockRejectedValueOnce(new MusaProviderError("REEL_AUDIO_UNAVAILABLE"));
+    expect(await step(reel, connected)).toMatchObject({ status: "failed", errorCode: "REEL_AUDIO_UNAVAILABLE" });
+    expect(row).toMatchObject({ stage: "READY", attemptStartedAt: null });
+    expect(mocks.zernio).not.toHaveBeenCalled();
+  });
+  it("rechecks the exact track, then retries an ambiguous POST without changing the payload", async () => {
+    mocks.zernioAudio.mockResolvedValueOnce({ id: audioConfiguration.audioId });
+    mocks.zernio.mockRejectedValueOnce(new MusaProviderError("PROVIDER_UNREACHABLE", true, true))
+      .mockResolvedValueOnce({ post: { _id: "remote-post" } });
+    await step(reel, connected);
+    expect(row).toMatchObject({ stage: "ZERNIO_CREATING", status: "processing" });
+    await step(reel, connected);
+    expect(row).toMatchObject({ stage: "ZERNIO_PROCESSING", providerPostId: "remote-post" });
+    expect(mocks.zernioAudio).toHaveBeenCalledExactlyOnceWith(zernio, audioConfiguration.audioId);
+    expect(mocks.zernioAudio.mock.invocationCallOrder[0]).toBeLessThan(mocks.zernio.mock.invocationCallOrder[0]);
+    expect(mocks.zernio).toHaveBeenCalledTimes(2);
+    expect(mocks.zernio.mock.calls[1]).toEqual(mocks.zernio.mock.calls[0]);
   });
 });
