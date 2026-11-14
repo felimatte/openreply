@@ -6,14 +6,15 @@ import { getMetaReelAudioGrant } from "@/lib/integrations/musa/meta-reel-audio-g
 import { getMetaReelAudio, searchMetaReelAudio } from "@/lib/integrations/musa/meta-reel-audio";
 import { reelAudioId } from "@/lib/integrations/musa/publications-policy";
 import { MusaProviderError } from "@/lib/integrations/musa/publications-provider";
-import { getZernioReelAudio, searchZernioReelAudio } from "@/lib/integrations/musa/reel-audio";
+import { getZernioReelAudio, reelAudioType, searchZernioReelAudio } from "@/lib/integrations/musa/reel-audio";
 
 export const runtime = "nodejs";
 
 const audioQuery = z.object({
   q: z.string().trim().max(120).optional(),
   audioId: reelAudioId.optional(),
-}).refine(({ q, audioId }) => q === undefined || audioId === undefined);
+  audioType: reelAudioType.optional(),
+}).refine(({ q, audioId, audioType }) => audioId === undefined || (q === undefined && audioType === undefined));
 
 export async function GET(request: Request) {
   try {
@@ -23,25 +24,26 @@ export async function GET(request: Request) {
     const query = audioQuery.safeParse({
       q: params.get("q") ?? undefined,
       audioId: params.get("audioId") ?? undefined,
+      audioType: params.get("audioType") ?? undefined,
     });
-    if (!query.success || ["accountId", "q", "audioId"].some((name) => params.getAll(name).length > 1)) {
+    if (!query.success || ["accountId", "q", "audioId", "audioType"].some((name) => params.getAll(name).length > 1)) {
       throw new MusaIntegrationError(400, "INVALID_AUDIO_QUERY", "Choose a search or a single Instagram track.");
     }
 
     const base = { version: 1, accountId: account.id };
     try {
-      const { audioId, q } = query.data;
+      const { audioId, q, audioType } = query.data;
       if (account.provider === "META") {
         const access = await getMetaReelAudioGrant(account);
         if (!access) return musaJson({ ...base, available: false, tracks: [] });
-        const tracks = audioId ? [await getMetaReelAudio(access, audioId)] : await searchMetaReelAudio(access, q);
+        const tracks = audioId ? [await getMetaReelAudio(access, audioId)] : await searchMetaReelAudio(access, q, audioType);
         return musaJson({ ...base, available: true, tracks });
       }
       if (!account.zernioAccountId)
         throw new MusaIntegrationError(403, "RECONNECT_REQUIRED", "Reconnect this Instagram account to access music.");
       const provider = await createInstagramContext(account);
       if (provider.provider !== "ZERNIO") return musaJson({ ...base, available: false, tracks: [] });
-      const tracks = audioId ? [await getZernioReelAudio(provider, audioId)] : await searchZernioReelAudio(provider, q);
+      const tracks = audioId ? [await getZernioReelAudio(provider, audioId)] : await searchZernioReelAudio(provider, q, audioType);
       return musaJson({ ...base, available: true, tracks });
     } catch (error) {
       if (error instanceof MusaProviderError && error.code === "REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN")
