@@ -80,6 +80,16 @@ describe("publication provider boundary", () => {
     })).rejects.toMatchObject({ code: "REEL_AUDIO_VOLUME_UNAVAILABLE" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+  it("can retry a transient Facebook read while treating a failed write as uncertain", async () => {
+    const facebook = { ...meta, graph: "facebook" as const };
+    fetchMock.mockImplementation(() => Promise.resolve(Response.json({ error: { code: 2 } }, { status: 400 })));
+    await expect(publicationProviderRequest(facebook, "/ig_audio")).rejects.toMatchObject({
+      code: "PROVIDER_UNREACHABLE", ambiguous: false, retryable: true,
+    });
+    await expect(publicationProviderRequest(facebook, "/54321/media", { method: "POST" })).rejects.toMatchObject({
+      code: "PROVIDER_UNREACHABLE", ambiguous: true, retryable: true,
+    });
+  });
   it.each(["image", "video"] as const)("creates an unpublished carousel child of type %s", async type => {
     fetchMock.mockResolvedValue(Response.json({ id: "child-a" }));
     await createMetaCarouselChild(meta, "ig-a", { type, url: "https://cdn.example.com/media" });

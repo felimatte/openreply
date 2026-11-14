@@ -44,10 +44,14 @@ export async function publicationProviderRequest(
     if (response.status === 429) throw new MusaProviderError("PROVIDER_RATE_LIMIT", false, true);
     if (response.status === 401 || response.status === 403) throw new MusaProviderError("RECONNECT_REQUIRED");
     if (usesFacebook(context)) {
-      const meta = z.object({ error: z.object({ code: z.number(), error_subcode: z.number().optional() }) }).safeParse(body);
+      const meta = z.object({ error: z.object({ code: z.number(), error_subcode: z.number().optional(),
+        is_transient: z.boolean().optional() }) }).safeParse(body);
       const error = meta.success ? meta.data.error : undefined;
-      if (error && [10, 190, 200].includes(error.code)) throw new MusaProviderError("RECONNECT_REQUIRED");
       if (error && [4, 17, 32, 613, 80004].includes(error.code)) throw new MusaProviderError("PROVIDER_RATE_LIMIT", false, true);
+      if (error && (error.is_transient || [1, 2, 341].includes(error.code)))
+        throw new MusaProviderError("PROVIDER_UNREACHABLE", method === "POST", true);
+      if (error && ([10, 102, 190].includes(error.code) || error.code >= 200 && error.code <= 299))
+        throw new MusaProviderError("RECONNECT_REQUIRED");
       if (options.audioLookup === "track" && (response.status === 404 || error?.code === 100 && error.error_subcode === 33))
         throw new MusaProviderError("REEL_AUDIO_UNAVAILABLE");
     }

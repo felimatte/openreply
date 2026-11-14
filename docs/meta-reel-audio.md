@@ -9,6 +9,8 @@
 
 ## Conexión y verificación
 
+La cuenta ya debe poder publicar desde MUSA con su conexión existente. Esta autorización añade el catálogo y conserva esa conexión.
+
 1. Como propietario o administrador del espacio de OpenReply, entrá en **Configuración**, elegí la cuenta profesional y abrí la autorización de música para Reels.
 2. En Facebook, aprobá los permisos solicitados y elegí la Página asociada a esa misma cuenta de Instagram.
 3. Confirmá que la cuenta figure conectada en Configuración. OpenReply verifica la identidad de la cuenta, el vínculo con su Página y el acceso al catálogo y a la consulta de cuota. Guarda cifrado el token de usuario dedicado a la música. Para comprobar el resultado de publicación con música, hace falta una prueba en la cuenta piloto.

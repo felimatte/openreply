@@ -166,7 +166,7 @@ export async function exchangeMetaReelAudioGrant(
       z.object({
         data: z.array(z.object({
           quota_usage: z.number().int().nonnegative(),
-          config: z.record(z.string(), z.unknown()),
+          config: z.object({ quota_total: z.number().int().nonnegative() }),
         })).min(1),
         error: z.never().optional(),
       }).parse(await readJson(graphUrl(`${grant.facebookInstagramId}/content_publishing_limit`, {
