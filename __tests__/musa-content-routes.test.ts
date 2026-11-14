@@ -30,8 +30,16 @@ describe("MUSA content route capabilities and flow boundary", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-store");
     const result = await response.json();
     expect(result.accounts[0]).toMatchObject({ id: account.id, canPublishTrialReels: canPublish,
-      trialUnavailableReason: canPublish ? null : "PUBLISH_PERMISSION_REQUIRED", canAttachFlowOnPublish: true });
+      trialUnavailableReason: canPublish ? null : "PUBLISH_PERMISSION_REQUIRED", canAttachFlowOnPublish: true,
+      canChooseReelFrame: canPublish, canUseReelCatalogAudio: false });
     expect(JSON.stringify(result)).not.toContain(account.accessToken);
+  });
+  it("offers Zernio accounts a frame without claiming their catalog is available", async () => {
+    mocks.auth.mockResolvedValue({ ...context, accounts: [{ ...account, provider: "ZERNIO" }] });
+    mocks.capability.mockResolvedValue({ canPublish: true, supportedFormats: ["reel"], publishUnavailableReason: null });
+    const { accounts: [listed] } = await (await accounts(new Request("https://example.invalid/accounts"))).json();
+    expect(listed.canChooseReelFrame).toBe(true);
+    expect(listed).not.toHaveProperty("canUseReelCatalogAudio");
   });
   it("reads the catalog only for the account authorized by the existing grant", async () => {
     const response = await flows(new Request("https://example.invalid/flows?accountId=account-a"));

@@ -11,7 +11,8 @@ export class MusaProviderError extends Error {
 
 export async function publicationProviderRequest(
   context: InstagramContext, path: string,
-  options: { method?: "GET" | "POST"; body?: unknown; idempotencyKey?: string; timeoutMs?: number } = {},
+  options: { method?: "GET" | "POST"; body?: unknown; idempotencyKey?: string; timeoutMs?: number;
+    audioLookup?: "catalog" | "track" } = {},
 ): Promise<unknown> {
   const method = options.method ?? "GET";
   const base = context.provider === "META"
@@ -33,6 +34,15 @@ export async function publicationProviderRequest(
   if (!response.ok) {
     if (response.status === 429) throw new MusaProviderError("PROVIDER_RATE_LIMIT", false, true);
     if (response.status === 401 || response.status === 403) throw new MusaProviderError("RECONNECT_REQUIRED");
+    if (context.provider === "ZERNIO" && options.audioLookup) {
+      const code = z.object({ code: z.string() }).safeParse(body);
+      if (response.status === 400 && code.success && code.data.code === "instagram_audio_requires_facebook_login")
+        throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
+      if (response.status === 404) {
+        const trackMissing = options.audioLookup === "track" && (!code.success || code.data.code !== "account_not_found");
+        throw new MusaProviderError(trackMissing ? "REEL_AUDIO_UNAVAILABLE" : "RECONNECT_REQUIRED");
+      }
+    }
     if (response.status === 409 && context.provider === "ZERNIO") {
       const result = z.object({ code: z.string().optional() }).safeParse(body);
       if (result.success && result.data.code === "idempotency_conflict")
@@ -63,10 +73,12 @@ const remoteId = z.object({ id: z.string().min(1) });
 export async function createMetaContainer(context: InstagramContext, instagramId: string, input: MusaPublicationInput) {
   const format = publicationFormat(input), media = publicationMedia(input), cover = publicationCover(input);
   if (format === "carousel") throw new MusaProviderError("PUBLICATION_STATE_INVALID");
+  if (input.audioConfiguration) throw new MusaProviderError("REEL_AUDIO_REQUIRES_FACEBOOK_LOGIN");
   const story = { media_type: "STORIES", ...(media[0].type === "image" ? { image_url: media[0].url } : { video_url: media[0].url }) };
   const raw = await publicationProviderRequest(context, `/${encodeURIComponent(instagramId)}/media`, {
     method: "POST", body: format === "story" ? story : { ...(format === "image" ? { image_url: media[0].url }
       : { media_type: "REELS", video_url: media[0].url, ...(cover ? { cover_url: cover } : {}),
+        ...(input.thumbOffset !== undefined ? { thumb_offset: input.thumbOffset } : {}),
         ...(input.trialReel ? { trial_params: { graduation_strategy: input.trialReel.graduationStrategy } } : {}) }), caption: input.caption },
   });
   const parsed = remoteId.safeParse(raw);
@@ -144,6 +156,8 @@ export async function createZernioPublication(context: Extract<InstagramContext,
   const cover = publicationCover(input);
   const story = publicationFormat(input) === "story";
   const platformSpecificData = { ...(cover ? { instagramThumbnail: cover } : {}),
+    ...(input.thumbOffset !== undefined ? { thumbOffset: input.thumbOffset } : {}),
+    ...(input.audioConfiguration ? { audioConfiguration: input.audioConfiguration } : {}),
     ...(story ? { contentType: "story" } : {}),
     ...(input.trialReel ? { trialParams: { graduationStrategy: input.trialReel.graduationStrategy } } : {}) };
   return publicationProviderRequest(context, "/posts", { method: "POST", idempotencyKey: publicationId,
