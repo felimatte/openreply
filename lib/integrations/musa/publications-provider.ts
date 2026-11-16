@@ -10,7 +10,8 @@ export class MusaProviderError extends Error {
 }
 
 export type FacebookPublicationContext = { provider: "META"; graph: "facebook"; accessToken: string };
-export type PublicationProviderContext = InstagramContext | FacebookPublicationContext;
+export type PublicationProviderContext = Extract<InstagramContext, { provider: "META" }> | FacebookPublicationContext
+  | Pick<Extract<InstagramContext, { provider: "ZERNIO" }>, "provider" | "apiKey" | "accountId">;
 
 function usesFacebook(context: PublicationProviderContext): context is FacebookPublicationContext {
   return context.provider === "META" && "graph" in context;

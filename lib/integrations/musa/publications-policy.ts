@@ -14,7 +14,8 @@ function publicHttps(value: string): boolean {
   } catch { return false; }
 }
 
-const mediaUrl = z.string().max(4096).url().refine(publicHttps, "A public HTTPS media URL is required");
+export const musaPublicMediaUrl = z.string().max(4096).url().refine(publicHttps, "A public HTTPS media URL is required");
+const mediaUrl = musaPublicMediaUrl;
 export const reelAudioId = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
 const volume = z.number().int().min(0).max(100);
 const reelMediaOptions = {
